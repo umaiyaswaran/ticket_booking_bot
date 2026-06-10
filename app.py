@@ -618,8 +618,8 @@ def user_chatbot_page():
         st.markdown("*Chat with our intelligent booking assistant - simply describe what you need!*")
         st.markdown("")
         
-        # Quick action buttons - responsive layout (2 cols on mobile, 4 on desktop)
-        col1, col2, col3, col4 = st.columns(4)
+        # Quick action buttons - responsive layout (2 cols on mobile, 5 on desktop)
+        col1, col2, col3, col4, col5 = st.columns(5)
         
         with col1:
             if st.button("📝 Book", use_container_width=True, key="quick_book"):
@@ -639,6 +639,13 @@ def user_chatbot_page():
         with col4:
             if st.button("❓ Help", use_container_width=True, key="quick_help"):
                 st.session_state.quick_action = "help"
+                st.rerun()
+
+        with col5:
+            unread_count = db.get_unread_notification_count(st.session_state.user)
+            notif_label = f"🔔 Alerts ({unread_count})" if unread_count > 0 else "🔔 Alerts"
+            if st.button(notif_label, use_container_width=True, key="quick_notifications"):
+                st.session_state.quick_action = "notifications"
                 st.rerun()
         
         st.markdown("---")
@@ -692,6 +699,9 @@ def user_chatbot_page():
             elif st.session_state.quick_action == "help":
                 user_input = "help"
                 st.session_state.quick_action = None
+            elif st.session_state.quick_action == "notifications":
+                # handled below as a panel, not a chat message
+                pass
         
         if user_input and user_input != st.session_state.last_message:
             # Mark this message as processed
@@ -713,7 +723,54 @@ def user_chatbot_page():
             })
             
             st.rerun()
-    
+
+        # ── Notifications Panel ──────────────────────────────────────────
+        if st.session_state.get("quick_action") == "notifications":
+            st.markdown("---")
+            st.markdown("### 🔔 Your Notifications")
+
+            notifications = db.get_user_notifications(st.session_state.user)
+            # Mark all as read now that user opened the panel
+            db.mark_notifications_read(st.session_state.user)
+
+            if not notifications:
+                st.info("📭 You have no notifications yet. Agencies will send you messages about your bookings here.")
+            else:
+                for notif in notifications:
+                    is_unread = not notif.get("is_read", True)
+                    border_color = "#00d4ff" if is_unread else "rgba(255,255,255,0.15)"
+                    bg_color = "rgba(0,212,255,0.08)" if is_unread else "rgba(255,255,255,0.03)"
+                    unread_badge = "🆕 " if is_unread else ""
+
+                    created_at = notif.get("created_at")
+                    time_str = created_at.strftime("%d %b %Y, %I:%M %p") if created_at else "Unknown time"
+
+                    st.markdown(
+                        f"""
+                        <div style="
+                            background: {bg_color};
+                            border-left: 4px solid {border_color};
+                            border-radius: 8px;
+                            padding: 14px 16px;
+                            margin: 10px 0;
+                        ">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                                <span style="font-weight:700; color:#00d4ff; font-size:0.95em;">
+                                    {unread_badge}🏢 {notif.get('agency_name', notif.get('agency_username', 'Agency'))}
+                                </span>
+                                <span style="font-size:0.78em; color:#b0b9c6;">🎫 Booking #{notif.get('booking_id')} &nbsp;|&nbsp; 🕐 {time_str}</span>
+                            </div>
+                            <p style="margin:0; font-size:0.92em; color:#e0e8f0; line-height:1.5;">{notif.get('message', '')}</p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+            if st.button("✖ Close Notifications", key="close_notif"):
+                st.session_state.quick_action = None
+                st.rerun()
+            st.markdown("---")
+
     else:
         # MANUAL BOOKING MODE
         st.markdown("### 📝 Manual Booking Mode")
@@ -971,7 +1028,7 @@ def agency_dashboard():
     st.markdown("---")
     
     # Tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Statistics", "📋 Bookings", "🛣️ Routes", "⚙️ Settings"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Statistics", "📋 Bookings", "🛣️ Routes", "⚙️ Settings", "📢 Send Notification"])
     
     with tab1:
         st.subheader("📊 Booking Statistics")
@@ -1064,11 +1121,189 @@ def agency_dashboard():
         agency_info = db.get_agency(agency_username)
         
         if agency_info:
-            st.markdown("**Current Configuration:**")
-            st.write(f"- Agency Name: {agency_info.get('agency_name')}")
-            st.write(f"- Total Vehicles: {agency_info.get('total_vehicles')}")
-            st.write(f"- Seats per Vehicle: {agency_info.get('seats_per_vehicle')}")
-            st.write(f"- Routes: {len(agency_info.get('routes', []))}")
+            st.markdown("### 🛠️ Edit Configuration")
+            with st.form("agency_settings_form"):
+                new_agency_name = st.text_input(
+                    "Agency Name",
+                    value=agency_info.get("agency_name", "")
+                )
+                new_total_vehicles = st.number_input(
+                    "Total Vehicles",
+                    min_value=1,
+                    max_value=1000,
+                    value=int(agency_info.get("total_vehicles", 0))
+                )
+                new_seats_per_vehicle = st.number_input(
+                    "Seats per Vehicle",
+                    min_value=1,
+                    max_value=100,
+                    value=int(agency_info.get("seats_per_vehicle", 0))
+                )
+                
+                # Retrieve current bus type index
+                bus_options = ["Standard (2x2)", "Luxury (2x1)", "Sleeper (1x2)"]
+                current_bus_type = agency_info.get("bus_type", "Standard (2x2)")
+                try:
+                    bus_index = bus_options.index(current_bus_type)
+                except ValueError:
+                    bus_index = 0
+                    
+                new_bus_type = st.selectbox(
+                    "Bus Model / Type",
+                    bus_options,
+                    index=bus_index
+                )
+                
+                submitted = st.form_submit_button("💾 Save Settings", use_container_width=True)
+                if submitted:
+                    if not new_agency_name.strip():
+                        st.error("⚠️ Agency Name cannot be empty.")
+                    else:
+                        agency_details = {
+                            "agency_name": new_agency_name.strip(),
+                            "total_vehicles": int(new_total_vehicles),
+                            "seats_per_vehicle": int(new_seats_per_vehicle),
+                            "bus_type": new_bus_type,
+                            "routes": agency_info.get("routes", [])
+                        }
+                        res = db.update_agency(agency_username, agency_details)
+                        if res and res.get("success"):
+                            st.success("✅ Settings updated successfully!")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Failed to update settings: {res.get('message') if res else 'Unknown error'}")
+
+    with tab5:
+        st.subheader("📢 Send Notification to Passengers")
+        st.markdown("*Select one or more passengers below and send a message directly to their notification panel.*")
+        st.markdown("---")
+
+        bookings = db.get_bookings_by_agency(agency_username)
+
+        if not bookings:
+            st.info("📭 No bookings found. Notifications can only be sent to passengers who have booked with you.")
+        else:
+            # Date filter
+            available_dates = sorted(list(set(b.get('date') for b in bookings if b.get('date'))))
+            
+            def reset_checkbox_selections():
+                st.session_state["notif_select_all"] = False
+                for key in list(st.session_state.keys()):
+                    if key.startswith("notif_chk_"):
+                        st.session_state[key] = False
+            
+            if available_dates:
+                selected_date = st.selectbox(
+                    "📅 Filter by Travel Date",
+                    ["-- All Dates --"] + available_dates,
+                    key="notif_date_filter",
+                    on_change=reset_checkbox_selections
+                )
+                if selected_date != "-- All Dates --":
+                    bookings = [b for b in bookings if b.get('date') == selected_date]
+
+            # ── Passenger multi-select list ──────────────────────────────
+            st.markdown("#### 🧑‍🤝‍🧑 Select Passengers")
+
+            # Build a list of (label, booking) tuples
+            booking_list = []
+            for b in bookings:
+                label = (
+                    f"#{b.get('booking_id')}  |  "
+                    f"{b.get('passenger_name', 'N/A')}  |  "
+                    f"{b.get('source')} → {b.get('destination')}  |  "
+                    f"{b.get('date')}  |  Seat: {b.get('seat')}"
+                )
+                booking_list.append((label, b))
+
+            all_labels = [lbl for lbl, _ in booking_list]
+
+            def toggle_select_all():
+                select_all_val = st.session_state.get("notif_select_all", False)
+                for idx in range(len(booking_list)):
+                    st.session_state[f"notif_chk_{idx}"] = select_all_val
+
+            # "Select All" toggle
+            select_all = st.checkbox(
+                "✅ Select All Passengers",
+                value=False,
+                key="notif_select_all",
+                on_change=toggle_select_all
+            )
+
+            # Individual checkboxes
+            st.markdown("---")
+            checked_bookings = []
+            for idx, (label, booking) in enumerate(booking_list):
+                checked = st.checkbox(
+                    label, 
+                    value=st.session_state.get(f"notif_chk_{idx}", select_all), 
+                    key=f"notif_chk_{idx}"
+                )
+                if checked:
+                    checked_bookings.append(booking)
+
+            # Summary of selection
+            st.markdown("---")
+            if checked_bookings:
+                st.success(f"✅ **{len(checked_bookings)}** passenger(s) selected")
+            else:
+                st.info("☝️ Select at least one passenger to send a notification.")
+
+            # ── Message composer ─────────────────────────────────────────
+            st.markdown("#### 💬 Message")
+            template = st.selectbox(
+                "📝 Quick Templates (optional)",
+                [
+                    "-- Select a template or write your own --",
+                    "Your bus departure has been rescheduled. Please check the updated time.",
+                    "Your bus is running on time. Please arrive 15 minutes early.",
+                    "There is a platform change for your journey. Please check with our staff.",
+                    "Your booking has been confirmed. Have a safe journey! 🚌",
+                    "Due to unforeseen circumstances, this trip has been cancelled. Please contact us for a refund.",
+                ],
+                key="notif_template"
+            )
+
+            prefill = "" if template.startswith("--") else template
+            notif_message = st.text_area(
+                "Write your message",
+                value=prefill,
+                height=130,
+                placeholder="e.g. Your bus is delayed by 30 minutes due to heavy traffic. We apologise for the inconvenience.",
+                key="notif_message_input"
+            )
+
+            # ── Send button ──────────────────────────────────────────────
+            send_col, _ = st.columns([1, 2])
+            with send_col:
+                if st.button("📤 Send Notification", use_container_width=True, key="send_notif_btn"):
+                    if not checked_bookings:
+                        st.warning("⚠️ Please select at least one passenger.")
+                    elif not notif_message.strip():
+                        st.warning("⚠️ Please enter a message before sending.")
+                    else:
+                        sent_ok = 0
+                        sent_fail = 0
+                        for booking in checked_bookings:
+                            result = db.send_notification(
+                                agency_username=agency_username,
+                                to_username=booking.get("username"),
+                                booking_id=booking.get("booking_id"),
+                                message=notif_message.strip()
+                            )
+                            if result["success"]:
+                                sent_ok += 1
+                            else:
+                                sent_fail += 1
+
+                        if sent_ok:
+                            st.success(
+                                f"✅ Notification sent to **{sent_ok}** passenger(s) successfully!"
+                            )
+                        if sent_fail:
+                            st.error(f"❌ Failed to send to {sent_fail} passenger(s).")
+
 
 # =====================================================
 # MAIN APP

@@ -15,10 +15,11 @@ db = client["ticket_booking"]
 bookings_collection = db["bookings"]
 users_collection = db["users"]
 agencies_collection = db["agencies"]
+notifications_collection = db["notifications"]
 
 print("🔗 MongoDB Connection Settings:")
 print(f"   Database: {db.name}")
-print(f"   Collections: bookings, users, agencies")
+print(f"   Collections: bookings, users, agencies, notifications")
 print(f"   URI: {MONGO_URI[:50]}...")
 
 
@@ -313,10 +314,11 @@ def update_agency(username, agency_details):
                 "agency_name": agency_details.get("agency_name", ""),
                 "routes": routes,
                 "total_vehicles": int(agency_details.get("total_vehicles", 0)),
-                "seats_per_vehicle": int(agency_details.get("seats_per_vehicle", 0))
+                "seats_per_vehicle": int(agency_details.get("seats_per_vehicle", 0)),
+                "bus_type": agency_details.get("bus_type", "Standard (2x2)")
             }}
         )
-        return {"success": result.modified_count > 0, "message": "Agency updated"}
+        return {"success": result.matched_count > 0, "message": "Agency updated"}
     except Exception as e:
         print(f"❌ UPDATE AGENCY ERROR: {e}")
         return {"success": False, "message": str(e)}
@@ -787,3 +789,127 @@ def get_booking_details(booking_id):
     except Exception as e:
         print(f"❌ GET BOOKING DETAILS ERROR: {e}")
         return None
+
+
+# =========================
+# NOTIFICATION FUNCTIONS
+# =========================
+
+def get_next_notification_id():
+    """Auto-increment notification ID"""
+    last = notifications_collection.find_one(sort=[("notification_id", DESCENDING)])
+    if last and "notification_id" in last:
+        return last["notification_id"] + 1
+    return 5001
+
+
+def send_notification(agency_username, to_username, booking_id, message):
+    """
+    Agency sends a notification/message to a user who booked a ticket.
+
+    Args:
+        agency_username: Username of the agency sending the message
+        to_username: Username of the user who booked the ticket
+        booking_id: Related booking ID (for context)
+        message: The message text
+
+    Returns:
+        {"success": True/False, "message": str}
+    """
+    try:
+        # Resolve agency display name
+        agency = agencies_collection.find_one({"username": agency_username})
+        agency_name = agency.get("agency_name", agency_username) if agency else agency_username
+
+        notification_id = get_next_notification_id()
+
+        notification_data = {
+            "notification_id": notification_id,
+            "agency_username": agency_username,
+            "agency_name": agency_name,
+            "to_username": to_username,
+            "booking_id": booking_id,
+            "message": message,
+            "is_read": False,
+            "created_at": datetime.now()
+        }
+
+        notifications_collection.insert_one(notification_data)
+        print(f"✅ NOTIFICATION SENT → {to_username} | Booking #{booking_id}")
+        return {"success": True, "message": "Notification sent successfully!"}
+
+    except Exception as e:
+        print(f"❌ SEND NOTIFICATION ERROR: {e}")
+        return {"success": False, "message": str(e)}
+
+
+def get_user_notifications(username):
+    """
+    Get all notifications for a user, newest first.
+
+    Args:
+        username: The user's username
+
+    Returns:
+        List of notification dicts
+    """
+    try:
+        results = []
+        notes = notifications_collection.find(
+            {"to_username": username}
+        ).sort("created_at", DESCENDING)
+
+        for n in notes:
+            results.append({
+                "notification_id": n.get("notification_id"),
+                "agency_username": n.get("agency_username"),
+                "agency_name": n.get("agency_name"),
+                "booking_id": n.get("booking_id"),
+                "message": n.get("message"),
+                "is_read": n.get("is_read", False),
+                "created_at": n.get("created_at")
+            })
+
+        print(f"🔔 RETRIEVED {len(results)} NOTIFICATIONS FOR: {username}")
+        return results
+
+    except Exception as e:
+        print(f"❌ GET USER NOTIFICATIONS ERROR: {e}")
+        return []
+
+
+def mark_notifications_read(username):
+    """
+    Mark all notifications for a user as read.
+
+    Args:
+        username: The user's username
+    """
+    try:
+        result = notifications_collection.update_many(
+            {"to_username": username, "is_read": False},
+            {"$set": {"is_read": True}}
+        )
+        print(f"✅ MARKED {result.modified_count} NOTIFICATIONS AS READ FOR: {username}")
+    except Exception as e:
+        print(f"❌ MARK NOTIFICATIONS READ ERROR: {e}")
+
+
+def get_unread_notification_count(username):
+    """
+    Get count of unread notifications for a user.
+
+    Args:
+        username: The user's username
+
+    Returns:
+        Integer count of unread notifications
+    """
+    try:
+        count = notifications_collection.count_documents(
+            {"to_username": username, "is_read": False}
+        )
+        return count
+    except Exception as e:
+        print(f"❌ GET UNREAD COUNT ERROR: {e}")
+        return 0

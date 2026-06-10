@@ -22,7 +22,7 @@ class BookingConversation:
     
     def __init__(self, username):
         self.username = username
-        self.stage = "initial"  # Stages: initial, route_info, available_agencies, seat_selection, confirmation
+        self.stage = "initial"  # Stages: initial, route_info, available_agencies, seat_selection, passenger_info_other, confirmation
         self.source = None
         self.destination = None
         self.date = None
@@ -31,8 +31,9 @@ class BookingConversation:
         self.selected_seat = None
         self.passenger_name = None
         self.passenger_age = None
-        self.passenger_gender = None  # New: Track passenger gender
+        self.passenger_gender = None  # Track passenger gender
         self.available_seats = []
+        self.booking_for_other = False  # True when booking a second ticket for another person
     
     def reset(self):
         """Reset conversation state"""
@@ -47,6 +48,7 @@ class BookingConversation:
         self.passenger_age = None
         self.passenger_gender = None
         self.available_seats = []
+        self.booking_for_other = False
 
 # Store conversations per user
 active_conversations = {}
@@ -88,11 +90,20 @@ def extract_route_info(text):
     info = {}
     text_lower = text.lower()
     
-    # Remove common keywords that might interfere
-    clean_text = re.sub(r'\b(to book|book|reserve|ticket|i want to|i would like to)\b\s*', '', text_lower)
+    # 1. Remove travel dates first to avoid matching them in route names
+    clean_text = re.sub(r'\b\d{4}-\d{2}-\d{2}\b', '', text_lower)
+    clean_text = re.sub(r'\b\d{2}[\/-]\d{2}[\/-]\d{4}\b', '', clean_text)
     
-    # Remove date part to avoid matching it
-    clean_text = re.sub(r'\s+(?:on|at)\s+\d+[\/-]\d+[\/-]\d+', '', clean_text)
+    # 2. Remove "on" or "at" preceding/succeeding the dates
+    clean_text = re.sub(r'\b(on|at)\b\s*$', '', clean_text)
+    clean_text = re.sub(r'\b(on|at)\b\s+', ' ', clean_text)
+    
+    # 3. Remove common booking-related keywords and phrases
+    keywords_pattern = r'\b(i want to to book|i want to book|i want to|i would like to to book|i would like to book|i would like to|to book|book|booking|reserve|tickets?)\b\s*'
+    clean_text = re.sub(keywords_pattern, '', clean_text)
+    
+    # Normalize spaces
+    clean_text = re.sub(r'\s+', ' ', clean_text).strip()
     
     # Pattern 1: "from X to Y"
     from_to_match = re.search(r'from\s+([A-Za-z\s]+?)\s+to\s+([A-Za-z\s]+?)(?:\s*,|$)', clean_text)
@@ -109,6 +120,7 @@ def extract_route_info(text):
         return info
     
     return info
+
 
 def extract_date(text):
     """Extract travel date from text"""
@@ -130,12 +142,12 @@ def extract_date(text):
     return None
 
 def extract_passenger_info(text):
-    """Extract name and age from text - supports multiple formats"""
+    """Extract name, age, and gender from text - supports multiple formats"""
     info = {}
     text_lower = text.lower()
     text_clean = text.strip().strip("'\"")  # Remove quotes
     
-    # Try comma-separated format first: "umaiyas,20" or "umaiyas, 20"
+    # Try comma-separated format first: "umaiyas,20" or "umaiyas, 20, male"
     if ',' in text_clean:
         parts = [p.strip().strip("'\"") for p in text_clean.split(',')]
         if len(parts) >= 2:
@@ -145,24 +157,34 @@ def extract_passenger_info(text):
             if potential_name and re.search(r'[A-Za-z]', potential_name):
                 info['name'] = potential_name.title()
             
-            # Second part onwards - look for age (first 1-3 digit number)
+            # Second part onwards - look for age (first 1-3 digit number) and gender
             for part in parts[1:]:
-                age_match = re.search(r'(\d{1,3})', part)
-                if age_match:
-                    age = int(age_match.group(1))
-                    if 1 <= age <= 100:
-                        info['age'] = age
-                        break
+                if 'age' not in info:
+                    age_match = re.search(r'\b(\d{1,3})\b', part)
+                    if age_match:
+                        age = int(age_match.group(1))
+                        if 1 <= age <= 100:
+                            info['age'] = age
+                            continue
+                
+                if 'gender' not in info:
+                    p_lower = part.lower().strip()
+                    if p_lower in ['male', 'm']:
+                        info['gender'] = 'Male'
+                    elif p_lower in ['female', 'f']:
+                        info['gender'] = 'Female'
+                    elif p_lower in ['neutral', 'n']:
+                        info['gender'] = 'Neutral'
     
-    # If we got age but not name, try to extract name from first part
-    if 'age' in info and 'name' not in info:
+    # If we got age/gender but not name, try to extract name from first part
+    if ('age' in info or 'gender' in info) and 'name' not in info:
         name_match = re.search(r'^[\w\s]+', text_clean)
         if name_match:
             potential_name = name_match.group(0).strip().split(',')[0].strip()
             if re.search(r'[A-Za-z]', potential_name):
                 info['name'] = potential_name.title()
     
-    # Try natural language patterns
+    # Try natural language patterns for name
     if 'name' not in info:
         name_pattern = r'(?:name|i\'m|i am|my name is)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)'
         name_match = re.search(name_pattern, text, re.IGNORECASE)
@@ -197,8 +219,25 @@ def extract_passenger_info(text):
                 if 1 <= age <= 100:
                     info['age'] = age
                     break
-    
+
+    # Look for gender in the entire text if not found yet
+    if 'gender' not in info:
+        gender_match = re.search(r'\b(male|female|neutral)\b', text_lower)
+        if gender_match:
+            info['gender'] = gender_match.group(1).title()
+        else:
+            m_match = re.search(r'\b(m|f|n)\b', text_lower)
+            if m_match:
+                g = m_match.group(1)
+                if g == 'm':
+                    info['gender'] = 'Male'
+                elif g == 'f':
+                    info['gender'] = 'Female'
+                elif g == 'n':
+                    info['gender'] = 'Neutral'
+                    
     return info
+
 
 def extract_seat(text):
     """Extract seat number/code from text"""
@@ -614,53 +653,117 @@ def get_available_seats_message(conv, username=None):
 
 
 def handle_seat_selection(conv, user_message, username=None):
-    """Handle user selecting a seat and auto-fetch profile with gender validation"""
+    """Handle user selecting a seat.
+    If the user already has a booking on the same route/date, ask for the
+    other passenger's name and age instead of reusing the profile."""
     seat = extract_seat(user_message)
-    
-    # Auto-fetch passenger details from login profile
-    passenger_gender = None
-    if username:
-        profile = db.get_user_profile(username)
-        if profile:
-            conv.passenger_name = profile.get('full_name', 'Unknown')
-            conv.passenger_age = profile.get('age')
-            conv.passenger_gender = profile.get('gender')
-            passenger_gender = profile.get('gender')
-    
+
     if not seat:
         return f"❌ Invalid seat. Available seats: {', '.join(conv.available_seats)}"
-    
+
     if seat not in conv.available_seats:
         return f"❌ Seat {seat} is not available. Choose from: {', '.join(conv.available_seats)}"
-    
-    # Get gender map for validation
+
+    # Get gender map / booked seats for validation
     gender_map = db.get_gender_map(
-        conv.selected_agency,
-        conv.source,
-        conv.destination,
-        conv.date
+        conv.selected_agency, conv.source, conv.destination, conv.date
     )
     booked_seats = db.get_booked_seats(
-        conv.selected_agency,
-        conv.source,
-        conv.destination,
-        conv.date
+        conv.selected_agency, conv.source, conv.destination, conv.date
     )
-    
-    # Validate gender compatibility for adjacent seats
-    is_valid, error_msg = validate_seat_gender_conflict(seat, passenger_gender or 'Neutral', gender_map, booked_seats)
-    if not is_valid:
-        return error_msg
-    
-    conv.selected_seat = seat
-    
-    # Skip asking for details, go directly to confirmation
-    return confirm_booking_message(conv)
+
+    # Check if this user already has a booking on this route+date
+    existing_bookings = db.get_user_bookings(username) if username else []
+    already_booked = any(
+        b.get('agency_username') == conv.selected_agency
+        and b.get('source', '').lower() == (conv.source or '').lower()
+        and b.get('destination', '').lower() == (conv.destination or '').lower()
+        and str(b.get('date', '')) == str(conv.date or '')
+        for b in existing_bookings
+    )
+
+    if already_booked:
+        # Booking is for another person — ask for their details
+        conv.booking_for_other = True
+        conv.selected_seat = seat
+        conv.stage = "passenger_info_other"
+        return (
+            f"💺 Seat **{seat}** selected!\n\n"
+            "✅ You already have a booking on this route. "
+            "This ticket will be for **another passenger**.\n\n"
+            "👤 Please provide the passenger's **name, age, and gender (Male/Female)**:\n"
+            "*(Format: Name, Age, Gender — e.g. `Ramesh, 32, Male`)*"
+        )
+    else:
+        # First booking — auto-fill from the logged-in user's profile
+        conv.booking_for_other = False
+        passenger_gender = None
+        if username:
+            profile = db.get_user_profile(username)
+            if profile:
+                conv.passenger_name = profile.get('full_name', 'Unknown')
+                conv.passenger_age = profile.get('age')
+                conv.passenger_gender = profile.get('gender')
+                passenger_gender = profile.get('gender')
+
+        # Validate gender compatibility for adjacent seats
+        is_valid, error_msg = validate_seat_gender_conflict(
+            seat, passenger_gender or 'Neutral', gender_map, booked_seats
+        )
+        if not is_valid:
+            return error_msg
+
+        conv.selected_seat = seat
+        return confirm_booking_message(conv)
+
 
 def handle_passenger_info(conv, user_message):
-    """Auto-fill passenger info from user profile - skip asking for details"""
-    # Passenger info is now fetched automatically from the login profile
-    # Skip this stage and move directly to confirmation
+    """Collect name, age, and gender for an 'other' passenger when booking_for_other is True."""
+    if not conv.booking_for_other:
+        # Fallback: just go to confirmation
+        return confirm_booking_message(conv)
+
+    # Try to parse name, age, and gender from the user's reply
+    info = extract_passenger_info(user_message)
+
+    if 'name' in info:
+        conv.passenger_name = info['name']
+    if 'age' in info:
+        conv.passenger_age = info['age']
+    if 'gender' in info:
+        conv.passenger_gender = info['gender']
+
+    if not conv.passenger_name:
+        return (
+            "⚠️ I couldn't catch the passenger's name. "
+            "Please reply in the format: `Name, Age, Gender` (e.g. `Ramesh, 32, Male`)"
+        )
+    if not conv.passenger_age:
+        return (
+            f"⚠️ Got the name **{conv.passenger_name}** — now please provide their age and gender (Male/Female):\n"
+            "*(Format: Age, Gender — e.g. `32, Male`)*"
+        )
+    if not conv.passenger_gender:
+        return (
+            f"⚠️ Got **{conv.passenger_name}**, {conv.passenger_age} years old — now please provide their gender (Male or Female):"
+        )
+
+    # Validate gender compatibility for adjacent seats
+    gender_map = db.get_gender_map(
+        conv.selected_agency, conv.source, conv.destination, conv.date
+    )
+    booked_seats = db.get_booked_seats(
+        conv.selected_agency, conv.source, conv.destination, conv.date
+    )
+    is_valid, error_msg = validate_seat_gender_conflict(
+        conv.selected_seat, conv.passenger_gender or 'Neutral', gender_map, booked_seats
+    )
+    if not is_valid:
+        # Clear passenger gender and revert stage back to seat selection
+        conv.passenger_gender = None
+        conv.stage = "seat_selection"
+        return f"{error_msg}\n\nPlease choose another seat. Available seats: {', '.join(conv.available_seats)}"
+
     return confirm_booking_message(conv)
 
 def confirm_booking_message(conv):
@@ -828,7 +931,7 @@ Status: {booking['status']}
             return handle_agency_selection(conv, user_message, username)
         elif conv.stage == "seat_selection":
             return handle_seat_selection(conv, user_message, username)
-        elif conv.stage == "passenger_info":
+        elif conv.stage in ("passenger_info", "passenger_info_other"):
             return handle_passenger_info(conv, user_message)
         elif conv.stage == "confirmation":
             return handle_booking_confirmation(conv, user_message, username)
@@ -839,7 +942,7 @@ Status: {booking['status']}
             return handle_agency_selection(conv, user_message, username)
         elif conv.stage == "seat_selection":
             return handle_seat_selection(conv, user_message, username)
-        elif conv.stage == "passenger_info":
+        elif conv.stage in ("passenger_info", "passenger_info_other"):
             return handle_passenger_info(conv, user_message)
         elif conv.stage == "confirmation":
             return handle_booking_confirmation(conv, user_message, username)
