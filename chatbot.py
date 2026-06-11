@@ -825,6 +825,25 @@ def handle_booking_confirmation(conv, user_message, username):
 Your ticket has been successfully booked!
 Thank you for choosing our service. 🙏"""
             
+            # Send WhatsApp notifications
+            try:
+                import notifications as notif_manager
+                booking_data = {
+                    "booking_id": booking_id,
+                    "username": username,
+                    "agency_username": conv.selected_agency,
+                    "source": conv.source,
+                    "destination": conv.destination,
+                    "date": conv.date,
+                    "seat": conv.selected_seat,
+                    "passenger_name": conv.passenger_name,
+                    "passenger_age": conv.passenger_age,
+                    "status": "confirmed"
+                }
+                notif_manager.send_booking_confirmation(booking_data)
+            except Exception as e:
+                print(f"WhatsApp notification error: {e}")
+            
             conv.reset()
             return response
         else:
@@ -901,7 +920,16 @@ Status: {booking['status']}
         if id_match:
             booking_id = int(id_match.group(1))
             result = db.cancel_booking(booking_id)
-            return f"✅ {result['message']}" if result['success'] else f"❌ {result['message']}"
+            if result['success']:
+                # Send WhatsApp cancellation notification
+                try:
+                    import notifications as notif_manager
+                    notif_manager.send_cancellation_notification(result['booking'])
+                except Exception as e:
+                    print(f"WhatsApp cancel notification error: {e}")
+                return f"✅ {result['message']}"
+            else:
+                return f"❌ {result['message']}"
         return "Please provide booking ID. Example: 'cancel booking 1001'"
     
     # Command: View available routes

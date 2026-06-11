@@ -1,15 +1,11 @@
 import streamlit as st
+import os
 import db
 from chatbot import process_message, active_conversations, BookingConversation, handle_booking_confirmation
+from qr_generator import generate_booking_qr, generate_ticket_html
+import notifications as notif_manager
 import pandas as pd
 from datetime import datetime
-
-# =====================================================
-# VIEWPORT & RESPONSIVE SETTINGS
-# =====================================================
-st.markdown("""
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
-""", unsafe_allow_html=True)
 
 # Initialize database
 try:
@@ -17,30 +13,22 @@ try:
 except:
     pass
 
-# =====================================================
-# SESSION STATE INITIALIZATION
-# =====================================================
-
-if "user" not in st.session_state:
-    st.session_state.user = None
-
-if "role" not in st.session_state:
-    st.session_state.role = None
-
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-
-if "quick_action" not in st.session_state:
-    st.session_state.quick_action = None
-
-if "last_message" not in st.session_state:
-    st.session_state.last_message = None
-
-if "booking_mode" not in st.session_state:
-    st.session_state.booking_mode = "ai_bot"  # "ai_bot" or "manual"
+def init_session_state():
+    """Initialize session state - MUST be called AFTER set_page_config"""
+    if "user" not in st.session_state:
+        st.session_state.user = None
+    if "role" not in st.session_state:
+        st.session_state.role = None
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+    if "logged_in" not in st.session_state:
+        st.session_state.logged_in = False
+    if "quick_action" not in st.session_state:
+        st.session_state.quick_action = None
+    if "last_message" not in st.session_state:
+        st.session_state.last_message = None
+    if "booking_mode" not in st.session_state:
+        st.session_state.booking_mode = "ai_bot"
 
 # =====================================================
 # CUSTOM CSS
@@ -51,12 +39,34 @@ if "booking_mode" not in st.session_state:
 # =====================================================
 
 def render_sidebar():
-    """Render sidebar with navigation and booking options"""
+    """Render sidebar with navigation and booking options for Users and Agencies"""
     with st.sidebar:
-        st.markdown("### 🎫 Menu")
+        st.markdown("### 🎫 TicketHub Menu")
         st.markdown("---")
         
-        if st.session_state.logged_in and st.session_state.role == "User":
+        if not st.session_state.logged_in:
+            st.info("👤 Login to access your dashboard")
+        
+        elif st.session_state.role == "User":
+            # USER NAVIGATION
+            st.markdown("**👤 USER DASHBOARD**")
+            
+            if st.button("📊 Dashboard", use_container_width=True):
+                st.switch_page("app.py")
+            
+            st.divider()
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🎫 My Bookings", use_container_width=True):
+                    st.switch_page("pages/2_user_profile.py")
+            
+            with col2:
+                if st.button("⚙️ Profile", use_container_width=True):
+                    st.switch_page("pages/2_user_profile.py")
+            
+            st.divider()
+            
             # Booking Mode Selection
             st.markdown("**🤖 Booking Mode**")
             mode_col1, mode_col2 = st.columns(2)
@@ -76,352 +86,1211 @@ def render_sidebar():
                 st.success("✅ Using AI Bot Mode")
             else:
                 st.info("ℹ️ Using Manual Booking Mode")
+        
+        elif st.session_state.role == "Agency":
+            # AGENCY NAVIGATION
+            st.markdown("**🏢 AGENCY DASHBOARD**")
             
-            st.markdown("---")
+            if st.button("📊 Dashboard", use_container_width=True):
+                st.switch_page("pages/1_agency_dashboard.py")
             
-            if st.session_state.booking_mode == "manual":
-                # Manual Booking Section
-                st.markdown("**📝 Manual Booking Options**")
-                if st.button("✅ Book a Ticket", use_container_width=True, key="manual_book"):
-                    st.session_state.quick_action = "manual_book"
-                    st.rerun()
-                if st.button("📋 View My Bookings", use_container_width=True, key="manual_view"):
-                    st.session_state.quick_action = "manual_view"
-                    st.rerun()
-                if st.button("❌ Cancel Booking", use_container_width=True, key="manual_cancel"):
-                    st.session_state.quick_action = "manual_cancel"
-                    st.rerun()
-            else:
-                # AI Bot Section
-                st.markdown("**💬 Chat with AI Bot**")
-                st.markdown("Quick commands:")
-                st.markdown("- 'book a ticket'")
-                st.markdown("- 'show my bookings'")
-                st.markdown("- 'cancel booking'")
-                st.markdown("- 'available routes'")
+            if st.button("🛣️ Routes", use_container_width=True):
+                st.switch_page("pages/3_agency_routes.py")
             
-            st.markdown("---")
-            st.markdown("**⚙️ Settings**")
-            if st.button("👤 My Profile", use_container_width=True, key="profile_settings"):
-                st.session_state.quick_action = "profile_settings"
-                st.rerun()
+            if st.button("📱 WhatsApp Settings", use_container_width=True):
+                st.switch_page("pages/2_agency_whatsapp.py")
+            
+            if st.button("📢 Broadcast Messages", use_container_width=True):
+                st.switch_page("pages/4_agency_broadcast.py")
+            
+            st.divider()
+            st.markdown("**📈 Quick Stats**")
+            
+            # Quick stats
+            agency_bookings = list(db.bookings_collection.find({
+                "agency_username": st.session_state.user,
+                "status": "confirmed"
+            }))
+            
+            st.metric("Total Bookings", len(agency_bookings))
+        
+        # Common options for all logged-in users
+        if st.session_state.logged_in:
+            st.divider()
+            st.markdown("**🔧 Account**")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🏠 Home", use_container_width=True):
+                    st.switch_page("app.py")
+            
+            with col2:
+                if st.button("🚪 Logout", use_container_width=True, type="secondary"):
+                    st.session_state.logged_in = False
+                    st.session_state.user = None
+                    st.session_state.role = None
+                    st.session_state.chat_history = []
+                    st.success("✅ Logged out successfully")
+                    st.rerun()
+
 
 def inject_custom_css():
+    st.markdown('<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">', unsafe_allow_html=True)
     custom_css = """
     <style>
-        :root {
-            --primary-color: #00d4ff;
-            --secondary-color: #0099ff;
-            --accent-color: #667eea;
-            --dark-bg: #0f1419;
-            --card-bg: rgba(255, 255, 255, 0.05);
-            --card-border: rgba(0, 212, 255, 0.1);
-            --text-primary: #ffffff;
-            --text-secondary: #b0b9c6;
-            --success-color: #2ecc71;
-            --warning-color: #f39c12;
-            --error-color: #e74c3c;
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+        /* ============================================================
+           HIDE ALL DEFAULT STREAMLIT ELEMENTS
+           ============================================================ */
+        #MainMenu, footer, header[data-testid="stHeader"],
+        button[title="View fullscreen"],
+        [data-testid="stSidebarNav"],
+        [data-testid="stDecoration"],
+        .stDeployButton,
+        div[data-testid="stToolbar"],
+        div[data-testid="stStatusWidget"],
+        div[data-testid="stBottomBlockContainer"] > div:last-child {
+            display: none !important;
         }
 
+        .block-container {
+            padding-top: 0 !important;
+            padding-bottom: 0 !important;
+            padding-left: 1.5rem !important;
+            padding-right: 1.5rem !important;
+            max-width: 100% !important;
+        }
+
+        [data-testid="stMainBlockContainer"] {
+            padding-top: 0 !important;
+            padding-bottom: 0 !important;
+            max-width: 100% !important;
+        }
+
+        /* ============================================================
+           DESIGN TOKENS
+           ============================================================ */
+        :root {
+            --primary: #00d4ff;
+            --primary-soft: rgba(0, 212, 255, 0.15);
+            --primary-glow: rgba(0, 212, 255, 0.4);
+            --secondary: #6c63ff;
+            --accent: #a855f7;
+            --accent-soft: rgba(168, 85, 247, 0.15);
+            --gradient-brand: linear-gradient(135deg, #00d4ff 0%, #6c63ff 50%, #a855f7 100%);
+            --gradient-card: linear-gradient(145deg, rgba(17, 24, 34, 0.9) 0%, rgba(15, 20, 30, 0.95) 100%);
+            --gradient-glass: linear-gradient(145deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 100%);
+            --bg-body: #06080d;
+            --bg-card: #0f1319;
+            --bg-card-elevated: #141a23;
+            --bg-surface: rgba(255, 255, 255, 0.025);
+            --border: rgba(255, 255, 255, 0.06);
+            --border-hover: rgba(0, 212, 255, 0.25);
+            --border-active: rgba(0, 212, 255, 0.5);
+            --text-primary: #f0f4f8;
+            --text-secondary: #8b9ab5;
+            --text-muted: #4a5568;
+            --success: #10b981;
+            --success-soft: rgba(16, 185, 129, 0.12);
+            --warning: #f59e0b;
+            --warning-soft: rgba(245, 158, 11, 0.12);
+            --error: #ef4444;
+            --error-soft: rgba(239, 68, 68, 0.12);
+            --info: #3b82f6;
+            --info-soft: rgba(59, 130, 246, 0.12);
+            --r-xs: 6px;
+            --r-sm: 10px;
+            --r-md: 14px;
+            --r-lg: 20px;
+            --r-xl: 24px;
+            --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+            --shadow-md: 0 4px 16px rgba(0,0,0,0.35);
+            --shadow-lg: 0 8px 32px rgba(0,0,0,0.4);
+            --shadow-glow: 0 0 30px rgba(0, 212, 255, 0.08);
+            --shadow-glow-lg: 0 0 60px rgba(0, 212, 255, 0.12);
+            --glass-bg: rgba(15, 19, 25, 0.8);
+            --glass-border: rgba(255, 255, 255, 0.06);
+            --ease: cubic-bezier(0.4, 0, 0.2, 1);
+            --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        /* ============================================================
+           GLOBAL RESET & BACKGROUND
+           ============================================================ */
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
 
-        html, body, [data-testid="stAppViewContainer"], [data-testid="stMainBlockContainer"] {
-            background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 50%, #0f1419 100%);
+        html {
+            scroll-behavior: smooth;
+        }
+
+        html, body,
+        [data-testid="stAppViewContainer"],
+        [data-testid="stApp"],
+        .main .block-container {
+            background: var(--bg-body) !important;
             color: var(--text-primary);
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            width: 100%;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
         }
 
-        [data-testid="stSidebar"] {
-            background: linear-gradient(180deg, rgba(15, 20, 25, 0.95) 0%, rgba(26, 31, 46, 0.95) 100%);
-            border-right: 1px solid var(--card-border);
+        /* Animated mesh gradient background */
+        [data-testid="stAppViewContainer"]::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background:
+                radial-gradient(ellipse 80% 60% at 10% 10%, rgba(0, 212, 255, 0.07) 0%, transparent 60%),
+                radial-gradient(ellipse 60% 80% at 90% 90%, rgba(108, 99, 255, 0.06) 0%, transparent 60%),
+                radial-gradient(ellipse 50% 50% at 50% 50%, rgba(168, 85, 247, 0.04) 0%, transparent 70%);
+            z-index: -2;
+            pointer-events: none;
+            animation: meshFloat 20s ease-in-out infinite alternate;
         }
 
-        h1, h2, h3 {
-            background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 50%, var(--accent-color) 100%);
+        @keyframes meshFloat {
+            0% { opacity: 0.8; transform: scale(1); }
+            50% { opacity: 1; transform: scale(1.05); }
+            100% { opacity: 0.8; transform: scale(1); }
+        }
+
+        /* Floating orbs */
+        [data-testid="stAppViewContainer"]::after {
+            content: '';
+            position: fixed;
+            top: -200px;
+            right: -200px;
+            width: 500px;
+            height: 500px;
+            background: radial-gradient(circle, rgba(0, 212, 255, 0.05) 0%, transparent 70%);
+            border-radius: 50%;
+            z-index: -1;
+            pointer-events: none;
+            animation: orbFloat 15s ease-in-out infinite alternate;
+        }
+
+        @keyframes orbFloat {
+            0% { transform: translate(0, 0); }
+            100% { transform: translate(-100px, 100px); }
+        }
+
+        /* ============================================================
+           CUSTOM HEADER
+           ============================================================ */
+        .custom-header {
+            position: sticky;
+            top: 0;
+            z-index: 9998;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 28px;
+            height: 60px;
+            background: rgba(6, 8, 13, 0.85);
+            backdrop-filter: blur(24px) saturate(1.8);
+            -webkit-backdrop-filter: blur(24px) saturate(1.8);
+            border-bottom: 1px solid var(--glass-border);
+        }
+
+        .custom-header::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: var(--gradient-brand);
+            opacity: 0.3;
+        }
+
+        .header-logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        .header-logo-icon {
+            width: 36px;
+            height: 36px;
+            background: var(--gradient-brand);
+            border-radius: var(--r-sm);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            box-shadow: 0 2px 12px rgba(0, 212, 255, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .header-logo-icon::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(135deg, rgba(255,255,255,0.2) 0%, transparent 50%);
+            border-radius: inherit;
+        }
+
+        .header-logo-text {
+            font-size: 1.15em;
+            font-weight: 800;
+            background: var(--gradient-brand);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
-            font-weight: 700;
-            margin-bottom: 20px;
+            letter-spacing: -0.03em;
         }
 
+        .header-nav {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .header-nav-link {
+            padding: 6px 14px;
+            border-radius: var(--r-sm);
+            color: var(--text-secondary);
+            font-size: 0.85em;
+            font-weight: 500;
+            text-decoration: none;
+            transition: all 0.2s var(--ease);
+            cursor: pointer;
+        }
+
+        .header-nav-link:hover {
+            color: var(--text-primary);
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .header-nav-link.active {
+            color: var(--primary);
+            background: var(--primary-soft);
+        }
+
+        .header-user {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .header-user-avatar {
+            width: 34px;
+            height: 34px;
+            background: var(--gradient-brand);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 700;
+            color: #fff;
+            box-shadow: 0 2px 8px rgba(0, 212, 255, 0.25);
+        }
+
+        .header-user-info {
+            display: flex;
+            flex-direction: column;
+            line-height: 1.2;
+        }
+
+        .header-user-name {
+            font-size: 0.85em;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .header-user-role {
+            font-size: 0.7em;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-weight: 600;
+        }
+
+        /* ============================================================
+           CUSTOM FOOTER
+           ============================================================ */
+        .custom-footer {
+            text-align: center;
+            padding: 28px 20px;
+            margin-top: 40px;
+            border-top: 1px solid var(--border);
+            position: relative;
+        }
+
+        .custom-footer::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 120px;
+            height: 1px;
+            background: var(--gradient-brand);
+            opacity: 0.5;
+        }
+
+        .footer-brand {
+            font-size: 0.85em;
+            font-weight: 700;
+            background: var(--gradient-brand);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -0.02em;
+        }
+
+        .footer-copy {
+            font-size: 0.75em;
+            color: var(--text-muted);
+            margin-top: 6px;
+        }
+
+        /* ============================================================
+           HEADINGS
+           ============================================================ */
+        h1, h2, h3, h4, h5, h6,
+        [data-testid="stMarkdownContainer"] h1,
+        [data-testid="stMarkdownContainer"] h2,
+        [data-testid="stMarkdownContainer"] h3 {
+            background: var(--gradient-brand);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            line-height: 1.2;
+        }
+
+        h1, [data-testid="stMarkdownContainer"] h1 {
+            font-size: 2.2em !important;
+            margin-bottom: 6px !important;
+        }
+
+        h2, [data-testid="stMarkdownContainer"] h2 {
+            font-size: 1.6em !important;
+            margin-bottom: 4px !important;
+        }
+
+        h3, [data-testid="stMarkdownContainer"] h3 {
+            font-size: 1.25em !important;
+            margin-bottom: 4px !important;
+        }
+
+        /* ============================================================
+           CARDS
+           ============================================================ */
+        .card, .glass-card {
+            background: var(--gradient-card);
+            border: 1px solid var(--border);
+            border-radius: var(--r-md);
+            padding: 24px;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s var(--ease);
+        }
+
+        .card::before, .glass-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: var(--gradient-brand);
+            opacity: 0;
+            transition: opacity 0.3s var(--ease);
+        }
+
+        .card:hover, .glass-card:hover {
+            border-color: var(--border-hover);
+            box-shadow: var(--shadow-glow);
+            transform: translateY(-2px);
+        }
+
+        .card:hover::before, .glass-card:hover::before {
+            opacity: 0.5;
+        }
+
+        .glass-card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+        }
+
+        /* ============================================================
+           BUTTONS
+           ============================================================ */
+        [data-testid="stButton"] > button,
+        [data-testid="stFormSubmitButton"] > button {
+            background: var(--gradient-brand) !important;
+            border: none !important;
+            border-radius: var(--r-sm) !important;
+            color: #fff !important;
+            padding: 11px 28px !important;
+            font-weight: 700 !important;
+            font-size: 0.88em !important;
+            cursor: pointer !important;
+            width: 100% !important;
+            letter-spacing: 0.01em !important;
+            transition: all 0.3s var(--ease) !important;
+            box-shadow: 0 2px 12px rgba(0, 212, 255, 0.2), inset 0 1px 0 rgba(255,255,255,0.15) !important;
+            min-height: 44px !important;
+            position: relative !important;
+            overflow: hidden !important;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.2) !important;
+        }
+
+        [data-testid="stButton"] > button::after,
+        [data-testid="stFormSubmitButton"] > button::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(135deg, rgba(255,255,255,0.15) 0%, transparent 50%);
+            pointer-events: none;
+        }
+
+        [data-testid="stButton"] > button:hover,
+        [data-testid="stFormSubmitButton"] > button:hover {
+            box-shadow: 0 4px 24px rgba(0, 212, 255, 0.35), inset 0 1px 0 rgba(255,255,255,0.2) !important;
+            transform: translateY(-2px) !important;
+        }
+
+        [data-testid="stButton"] > button:active,
+        [data-testid="stFormSubmitButton"] > button:active {
+            transform: translateY(0) !important;
+            box-shadow: 0 1px 6px rgba(0, 212, 255, 0.2) !important;
+        }
+
+        [data-testid="stButton"] > button:focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 2px;
+        }
+
+        /* ============================================================
+           TEXT INPUTS / TEXTAREA
+           ============================================================ */
         [data-testid="stTextInput"] input,
         [data-testid="stNumberInput"] input,
+        [data-testid="stTextArea"] textarea,
         input[type="text"],
         input[type="password"],
         textarea {
-            background: rgba(0, 212, 255, 0.05);
-            border: 1px solid var(--card-border);
-            border-radius: 8px;
-            color: var(--text-primary);
-            padding: 10px 12px;
-            font-size: 0.9em;
-            width: 100%;
+            background: rgba(255, 255, 255, 0.03) !important;
+            border: 1px solid var(--border) !important;
+            border-radius: var(--r-sm) !important;
+            color: var(--text-primary) !important;
+            padding: 12px 16px !important;
+            font-size: 0.9em !important;
+            width: 100% !important;
+            transition: all 0.25s var(--ease) !important;
+            font-family: 'Inter', sans-serif !important;
         }
 
-        [data-testid="stButton"] > button {
-            background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
-            border: none;
-            border-radius: 8px;
-            color: var(--dark-bg);
-            padding: 10px 24px;
-            font-weight: 600;
-            cursor: pointer;
-            width: 100%;
+        [data-testid="stTextInput"] input:focus,
+        [data-testid="stNumberInput"] input:focus,
+        [data-testid="stTextArea"] textarea:focus,
+        input[type="text"]:focus,
+        input[type="password"]:focus,
+        textarea:focus {
+            border-color: var(--primary) !important;
+            box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.1), 0 0 20px rgba(0, 212, 255, 0.05) !important;
+            outline: none !important;
+            background: rgba(255, 255, 255, 0.04) !important;
         }
 
-        [data-testid="stSelectbox"] {
-            background: rgba(0, 212, 255, 0.05);
-            border: 1px solid var(--card-border);
+        [data-testid="stTextInput"] label,
+        [data-testid="stNumberInput"] label,
+        [data-testid="stTextArea"] label,
+        [data-testid="stSelectbox"] label {
+            color: var(--text-secondary) !important;
+            font-size: 0.82em !important;
+            font-weight: 600 !important;
+            letter-spacing: 0.04em !important;
+            text-transform: uppercase !important;
         }
 
-        .message-container {
-            display: flex;
-            margin: 10px 0;
-            gap: 10px;
-            flex-wrap: wrap;
+        ::placeholder {
+            color: var(--text-muted) !important;
+            opacity: 1 !important;
         }
 
+        /* ============================================================
+           SELECTBOX / DROPDOWN
+           ============================================================ */
+        [data-testid="stSelectbox"] > div > div {
+            background: rgba(255, 255, 255, 0.03) !important;
+            border: 1px solid var(--border) !important;
+            border-radius: var(--r-sm) !important;
+            color: var(--text-primary) !important;
+            transition: all 0.25s var(--ease) !important;
+        }
+
+        [data-testid="stSelectbox"] > div > div:hover {
+            border-color: var(--border-hover) !important;
+        }
+
+        [data-testid="stSelectbox"] > div > div:focus-within {
+            border-color: var(--primary) !important;
+            box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.1) !important;
+        }
+
+        /* ============================================================
+           TABS
+           ============================================================ */
+        [data-testid="stTabs"] [data-baseweb="tab-list"] {
+            background: rgba(255, 255, 255, 0.02) !important;
+            gap: 2px !important;
+            border-bottom: 1px solid var(--border) !important;
+            border-radius: var(--r-sm) var(--r-sm) 0 0 !important;
+            padding: 4px 4px 0 4px !important;
+        }
+
+        [data-testid="stTabs"] button {
+            background: transparent !important;
+            border: none !important;
+            border-bottom: 2px solid transparent !important;
+            color: var(--text-secondary) !important;
+            font-weight: 600 !important;
+            font-size: 0.88em !important;
+            padding: 12px 20px !important;
+            transition: all 0.25s var(--ease) !important;
+            border-radius: var(--r-xs) var(--r-xs) 0 0 !important;
+            letter-spacing: 0.01em !important;
+        }
+
+        [data-testid="stTabs"] button:hover {
+            color: var(--text-primary) !important;
+            background: rgba(0, 212, 255, 0.04) !important;
+        }
+
+        [data-testid="stTabs"] button[aria-selected="true"],
+        [data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"] {
+            color: var(--primary) !important;
+            border-bottom-color: var(--primary) !important;
+            background: rgba(0, 212, 255, 0.06) !important;
+        }
+
+        [data-testid="stTabs"] [data-baseweb="tab-highlight"] {
+            background-color: var(--primary) !important;
+            border-radius: 2px !important;
+        }
+
+        [data-testid="stTabs"] [data-baseweb="tab-border"] {
+            display: none !important;
+        }
+
+        /* ============================================================
+           SIDEBAR
+           ============================================================ */
+        [data-testid="stSidebar"] {
+            background: linear-gradient(180deg, #080b12 0%, #0d1117 100%) !important;
+            border-right: 1px solid var(--border) !important;
+            box-shadow: 4px 0 24px rgba(0, 0, 0, 0.3) !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3,
+        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h2 {
+            font-size: 1.05em !important;
+            margin-bottom: 14px !important;
+            padding-bottom: 10px !important;
+            border-bottom: 1px solid var(--border) !important;
+        }
+
+        [data-testid="stSidebar"] hr {
+            border-color: var(--border) !important;
+            margin: 14px 0 !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stMarkdown"] p,
+        [data-testid="stSidebar"] [data-testid="stMarkdown"] li {
+            color: var(--text-secondary) !important;
+            font-size: 0.88em !important;
+        }
+
+        /* ============================================================
+           DIVIDERS
+           ============================================================ */
+        hr, [data-testid="stHorizontalBlock"] hr {
+            border: none !important;
+            border-top: 1px solid var(--border) !important;
+            margin: 18px 0 !important;
+        }
+
+        [data-testid="stDivider"] {
+            border-color: var(--border) !important;
+        }
+
+        /* ============================================================
+           EXPANDER
+           ============================================================ */
+        [data-testid="stExpander"] {
+            background: var(--bg-card) !important;
+            border: 1px solid var(--border) !important;
+            border-radius: var(--r-md) !important;
+            margin: 10px 0 !important;
+            transition: all 0.25s var(--ease) !important;
+        }
+
+        [data-testid="stExpander"]:hover {
+            border-color: var(--border-hover) !important;
+        }
+
+        [data-testid="stExpander"] summary {
+            color: var(--text-primary) !important;
+            font-weight: 600 !important;
+            font-size: 0.92em !important;
+        }
+
+        /* ============================================================
+           METRICS
+           ============================================================ */
+        [data-testid="stMetric"] {
+            background: var(--gradient-card) !important;
+            border: 1px solid var(--border) !important;
+            border-radius: var(--r-md) !important;
+            padding: 20px !important;
+            transition: all 0.3s var(--ease) !important;
+            position: relative !important;
+            overflow: hidden !important;
+        }
+
+        [data-testid="stMetric"]::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: var(--gradient-brand);
+            opacity: 0.6;
+        }
+
+        [data-testid="stMetric"]:hover {
+            border-color: var(--border-hover) !important;
+            box-shadow: var(--shadow-glow) !important;
+            transform: translateY(-2px) !important;
+        }
+
+        [data-testid="stMetricValue"] {
+            color: var(--primary) !important;
+            font-weight: 800 !important;
+            font-size: 1.8em !important;
+            letter-spacing: -0.03em !important;
+        }
+
+        [data-testid="stMetricLabel"] {
+            color: var(--text-secondary) !important;
+            font-weight: 600 !important;
+            font-size: 0.82em !important;
+            text-transform: uppercase !important;
+            letter-spacing: 0.06em !important;
+        }
+
+        [data-testid="stMetricDelta"] > div {
+            font-weight: 600 !important;
+        }
+
+        /* ============================================================
+           DATAFRAME / TABLES
+           ============================================================ */
+        .dataframe {
+            border: 1px solid var(--border) !important;
+            border-radius: var(--r-md) !important;
+            overflow: hidden !important;
+            font-size: 0.86em !important;
+            background: var(--bg-card) !important;
+        }
+
+        .dataframe thead tr th {
+            background: rgba(0, 212, 255, 0.06) !important;
+            color: var(--primary) !important;
+            font-weight: 700 !important;
+            border-bottom: 1px solid var(--border) !important;
+            padding: 12px 14px !important;
+            font-size: 0.9em !important;
+            text-transform: uppercase !important;
+            letter-spacing: 0.05em !important;
+        }
+
+        .dataframe tbody tr {
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03) !important;
+            transition: background 0.2s var(--ease) !important;
+        }
+
+        .dataframe tbody tr:hover {
+            background: rgba(0, 212, 255, 0.04) !important;
+        }
+
+        .dataframe tbody td {
+            color: var(--text-primary) !important;
+            padding: 11px 14px !important;
+        }
+
+        /* ============================================================
+           ALERTS / NOTIFICATIONS
+           ============================================================ */
+        [data-testid="stAlert"],
+        [data-testid="stNotification"] {
+            border-radius: var(--r-sm) !important;
+            border-left: 4px solid var(--primary) !important;
+            padding: 14px 18px !important;
+            font-size: 0.9em !important;
+        }
+
+        [data-testid="stAlert"][kind="success"],
+        div[data-baseweb="notification"][kind="positive"] {
+            background: var(--success-soft) !important;
+            border-left-color: var(--success) !important;
+        }
+
+        [data-testid="stAlert"][kind="warning"],
+        div[data-baseweb="notification"][kind="warning"] {
+            background: var(--warning-soft) !important;
+            border-left-color: var(--warning) !important;
+        }
+
+        [data-testid="stAlert"][kind="error"],
+        div[data-baseweb="notification"][kind="error"] {
+            background: var(--error-soft) !important;
+            border-left-color: var(--error) !important;
+        }
+
+        [data-testid="stAlert"][kind="info"],
+        div[data-baseweb="notification"][kind="info"] {
+            background: var(--info-soft) !important;
+            border-left-color: var(--info) !important;
+        }
+
+        /* ============================================================
+           CHAT MESSAGES
+           ============================================================ */
         .bot-message {
-            background: rgba(0, 212, 255, 0.1);
-            border-left: 3px solid var(--primary-color);
-            padding: 12px;
-            border-radius: 6px;
-            margin: 10px 0;
-            max-width: 85%;
-            word-wrap: break-word;
-            overflow-wrap: break-word;
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.06) 0%, rgba(108, 99, 255, 0.04) 100%) !important;
+            border-left: 3px solid var(--primary) !important;
+            padding: 16px 18px !important;
+            border-radius: 2px var(--r-sm) var(--r-sm) 2px !important;
+            margin: 12px 0 !important;
+            max-width: 82% !important;
+            word-wrap: break-word !important;
+            color: var(--text-primary) !important;
+            line-height: 1.65 !important;
+            font-size: 0.92em !important;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15) !important;
+            animation: msgSlideIn 0.3s var(--ease-spring) !important;
         }
 
         .user-message {
-            background: rgba(102, 126, 234, 0.2);
-            border-left: 3px solid var(--accent-color);
-            padding: 12px;
-            border-radius: 6px;
-            margin: 10px 0 10px auto;
-            max-width: 85%;
-            word-wrap: break-word;
-            overflow-wrap: break-word;
+            background: linear-gradient(135deg, rgba(108, 99, 255, 0.12) 0%, rgba(168, 85, 247, 0.08) 100%) !important;
+            border-left: 3px solid var(--secondary) !important;
+            padding: 16px 18px !important;
+            border-radius: 2px var(--r-sm) var(--r-sm) 2px !important;
+            margin: 12px 0 12px auto !important;
+            max-width: 82% !important;
+            word-wrap: break-word !important;
+            color: var(--text-primary) !important;
+            line-height: 1.65 !important;
+            font-size: 0.92em !important;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15) !important;
+            animation: msgSlideIn 0.3s var(--ease-spring) !important;
+        }
+
+        @keyframes msgSlideIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
         .success-box {
-            background: rgba(46, 204, 113, 0.1);
-            border-left: 4px solid var(--success-color);
-            padding: 12px;
-            border-radius: 6px;
-            margin: 10px 0;
+            background: var(--success-soft) !important;
+            border-left: 4px solid var(--success) !important;
+            padding: 14px 18px !important;
+            border-radius: 2px var(--r-sm) var(--r-sm) 2px !important;
+            margin: 10px 0 !important;
         }
 
         .error-box {
-            background: rgba(231, 76, 60, 0.1);
-            border-left: 4px solid var(--error-color);
-            padding: 12px;
-            border-radius: 6px;
-            margin: 10px 0;
+            background: var(--error-soft) !important;
+            border-left: 4px solid var(--error) !important;
+            padding: 14px 18px !important;
+            border-radius: 2px var(--r-sm) var(--r-sm) 2px !important;
+            margin: 10px 0 !important;
         }
 
         .stats-card {
-            background: linear-gradient(135deg, rgba(0, 212, 255, 0.1) 0%, rgba(0, 153, 255, 0.05) 100%);
-            border: 1px solid var(--card-border);
-            border-radius: 12px;
-            padding: 16px;
-            margin: 10px 0;
+            background: var(--gradient-card) !important;
+            border: 1px solid var(--border) !important;
+            border-radius: var(--r-md) !important;
+            padding: 22px !important;
+            margin: 8px 0 !important;
+            transition: all 0.3s var(--ease) !important;
         }
 
-        /* ==================== DESKTOP LAYOUT (1200px+) ==================== */
-        @media (min-width: 1200px) {
-            h1 { font-size: 2.5em; }
-            h2 { font-size: 1.8em; }
-            h3 { font-size: 1.4em; }
-            p { font-size: 1em; }
-            
-            [data-testid="stButton"] > button {
-                padding: 12px 28px;
+        .stats-card:hover {
+            border-color: var(--border-hover) !important;
+            box-shadow: var(--shadow-glow) !important;
+            transform: translateY(-2px) !important;
+        }
+
+        /* ============================================================
+           COLUMNS / LAYOUT
+           ============================================================ */
+        [data-testid="stHorizontalBlock"] {
+            gap: 14px !important;
+        }
+
+        [data-testid="stColumn"] {
+            padding: 4px !important;
+        }
+
+        /* ============================================================
+           FORMS
+           ============================================================ */
+        [data-testid="stForm"] {
+            background: var(--gradient-card) !important;
+            border: 1px solid var(--border) !important;
+            border-radius: var(--r-md) !important;
+            padding: 24px !important;
+            box-shadow: var(--shadow-md) !important;
+        }
+
+        [data-testid="stFormSubmitButton"] > button {
+            background: var(--gradient-brand) !important;
+        }
+
+        /* ============================================================
+           CHECKBOX / RADIO
+           ============================================================ */
+        [data-testid="stCheckbox"] label span {
+            color: var(--text-primary) !important;
+        }
+
+        [data-testid="stRadio"] label span {
+            color: var(--text-primary) !important;
+        }
+
+        /* ============================================================
+           DATE INPUT
+           ============================================================ */
+        [data-testid="stDateInput"] > div > div {
+            background: rgba(255, 255, 255, 0.03) !important;
+            border: 1px solid var(--border) !important;
+            border-radius: var(--r-sm) !important;
+            color: var(--text-primary) !important;
+        }
+
+        /* ============================================================
+           PROGRESS BAR
+           ============================================================ */
+        [data-testid="stProgress"] > div > div {
+            background: var(--gradient-brand) !important;
+            border-radius: 10px !important;
+        }
+
+        [data-testid="stProgress"] > div {
+            background: rgba(255, 255, 255, 0.06) !important;
+            border-radius: 10px !important;
+        }
+
+        /* ============================================================
+           SCROLLBAR
+           ============================================================ */
+        ::-webkit-scrollbar {
+            width: 5px;
+            height: 5px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(0, 212, 255, 0.15);
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(0, 212, 255, 0.3);
+        }
+
+        /* ============================================================
+           LOADING / SPINNER
+           ============================================================ */
+        [data-testid="stSpinner"] > div {
+            border-top-color: var(--primary) !important;
+        }
+
+        /* ============================================================
+           MOBILE LAYOUT
+           ============================================================ */
+        @media (max-width: 767px) {
+            header[data-testid="stHeader"] {
+                display: none !important;
+            }
+
+            .block-container {
+                padding-top: 0 !important;
+                padding-left: 12px !important;
+                padding-right: 12px !important;
+            }
+
+            .custom-header {
+                padding: 0 14px;
+                height: 50px;
+            }
+
+            .header-logo-text {
                 font-size: 1em;
             }
-            
-            .bot-message, .user-message {
-                max-width: 85%;
-                padding: 14px 16px;
-                font-size: 0.95em;
-            }
-        }
 
-        /* ==================== TABLET LAYOUT (768px - 1199px) ==================== */
-        @media (min-width: 768px) and (max-width: 1199px) {
-            h1 { font-size: 2em; }
-            h2 { font-size: 1.5em; }
-            h3 { font-size: 1.2em; }
-            p { font-size: 0.95em; }
-            
-            [data-testid="stButton"] > button {
-                padding: 10px 22px;
-                font-size: 0.95em;
-            }
-            
-            [data-testid="stTextInput"] input,
-            [data-testid="stNumberInput"] input,
-            input[type="text"],
-            input[type="password"] {
-                padding: 10px 14px;
-                font-size: 0.9em;
-            }
-            
-            .bot-message, .user-message {
-                max-width: 90%;
-                padding: 12px 14px;
-                font-size: 0.9em;
-            }
-            
-            [data-testid="stSidebar"] {
-                width: 200px !important;
-            }
-        }
-
-        /* ==================== MOBILE LAYOUT (480px - 767px) ==================== */
-        @media (min-width: 480px) and (max-width: 767px) {
-            h1 { font-size: 1.6em; margin-bottom: 12px; }
-            h2 { font-size: 1.2em; margin-bottom: 10px; }
-            h3 { font-size: 1em; margin-bottom: 8px; }
-            p { font-size: 0.85em; }
-            
-            [data-testid="stButton"] > button {
-                padding: 8px 16px;
-                font-size: 0.85em;
-                min-height: 40px;
-            }
-            
-            [data-testid="stTextInput"] input,
-            [data-testid="stNumberInput"] input,
-            input[type="text"],
-            input[type="password"] {
-                padding: 8px 12px;
-                font-size: 0.8em;
-                height: 40px;
-            }
-            
-            .bot-message, .user-message {
-                max-width: 95%;
-                padding: 10px 12px;
-                font-size: 0.8em;
-                margin: 8px 0;
-            }
-            
-            [data-testid="stSidebar"] {
-                width: 80px !important;
-            }
-            
-            [data-testid="stSidebar"] h3 {
-                font-size: 0.8em;
+            .header-nav {
                 display: none;
             }
-        }
 
-        /* ==================== SMALL MOBILE LAYOUT (< 480px) ==================== */
-        @media (max-width: 479px) {
-            html, body {
-                font-size: 14px;
+            h1, [data-testid="stMarkdownContainer"] h1 {
+                font-size: 1.5em !important;
             }
-            
-            h1 { font-size: 1.4em; margin-bottom: 10px; }
-            h2 { font-size: 1em; margin-bottom: 8px; }
-            h3 { font-size: 0.9em; margin-bottom: 6px; }
-            p { font-size: 0.8em; }
-            
+
+            h2, [data-testid="stMarkdownContainer"] h2 {
+                font-size: 1.2em !important;
+            }
+
             [data-testid="stButton"] > button {
-                padding: 6px 12px;
-                font-size: 0.75em;
-                min-height: 36px;
-                width: 100%;
-            }
-            
-            [data-testid="stTextInput"] input,
-            [data-testid="stNumberInput"] input,
-            input[type="text"],
-            input[type="password"],
-            textarea {
-                padding: 6px 10px;
-                font-size: 0.75em;
-                height: 36px;
-                width: 100% !important;
-            }
-            
-            [data-testid="stSelectbox"] select {
-                font-size: 0.75em;
-            }
-            
-            .bot-message, .user-message {
-                max-width: 98%;
-                padding: 8px 10px;
-                font-size: 0.75em;
-                margin: 6px 0;
-                border-left-width: 2px;
-            }
-            
-            [data-testid="stSidebar"] {
-                width: 0 !important;
-            }
-            
-            [data-testid="stTabs"] {
-                margin: 8px 0;
-            }
-            
-            .stats-card {
-                padding: 12px;
-                margin: 8px 0;
-            }
-            
-            /* Hide text labels in mobile, show only icons */
-            [data-testid="stSidebar"] > div:first-child {
-                width: 50px;
+                min-height: 48px !important;
+                font-size: 0.92em !important;
             }
         }
 
-        /* ==================== GENERAL RESPONSIVE FIXES ==================== */
-        [data-testid="stColumn"] {
-            padding: 4px;
+        @media (max-width: 480px) {
+            h1, [data-testid="stMarkdownContainer"] h1 {
+                font-size: 1.3em !important;
+            }
         }
 
-        [data-testid="stExpander"] {
-            margin: 8px 0;
-        }
-
-        /* Responsive table styling */
-        .dataframe {
-            font-size: inherit;
-            width: 100%;
-            overflow-x: auto;
-        }
-
-        /* Responsive iframe */
-        iframe {
-            max-width: 100%;
-            height: auto;
-        }
-
-        /* Touch-friendly tap targets */
+        /* ============================================================
+           TOUCH-FRIENDLY
+           ============================================================ */
         @media (hover: none) and (pointer: coarse) {
             [data-testid="stButton"] > button {
-                min-height: 48px;
-                padding: 12px 16px;
+                min-height: 48px !important;
+                padding: 12px 16px !important;
             }
-            
+
             input, select, textarea {
-                min-height: 48px;
-                font-size: 16px;
+                min-height: 48px !important;
+                font-size: 16px !important;
             }
         }
+
+        /* ============================================================
+           FOCUS VISIBLE (Accessibility)
+           ============================================================ */
+        :focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 2px;
+        }
+
+        /* ============================================================
+           SELECTION
+           ============================================================ */
+        ::selection {
+            background: rgba(0, 212, 255, 0.25);
+            color: #fff;
+        }
+
+        /* ============================================================
+           ANIMATIONS
+           ============================================================ */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .stMarkdown {
+            animation: fadeIn 0.4s var(--ease) both;
+        }
+
+        /* ============================================================
+           LOGIN PAGE HERO
+           ============================================================ */
+        .login-hero {
+            text-align: center;
+            padding: 20px 0 10px;
+        }
+
+        .login-hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 16px;
+            background: var(--primary-soft);
+            border: 1px solid rgba(0, 212, 255, 0.15);
+            border-radius: 20px;
+            font-size: 0.75em;
+            font-weight: 600;
+            color: var(--primary);
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            margin-bottom: 16px;
+        }
+
+        .login-hero h1 {
+            font-size: 2.8em !important;
+            margin-bottom: 10px !important;
+            line-height: 1.1 !important;
+        }
+
+        .login-hero p {
+            color: var(--text-secondary) !important;
+            font-size: 1.05em !important;
+            max-width: 400px;
+            margin: 0 auto !important;
+            line-height: 1.6 !important;
+        }
+
+        .login-card {
+            background: var(--gradient-card) !important;
+            border: 1px solid var(--border) !important;
+            border-radius: var(--r-lg) !important;
+            padding: 32px !important;
+            box-shadow: var(--shadow-lg), var(--shadow-glow) !important;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .login-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: var(--gradient-brand);
+        }
+
+        /* ============================================================
+           NOTIFICATION CARD (custom)
+           ============================================================ */
+        .notif-card {
+            border-radius: var(--r-sm) !important;
+            padding: 16px 18px !important;
+            margin: 10px 0 !important;
+            transition: all 0.25s var(--ease) !important;
+        }
+
+        .notif-card:hover {
+            transform: translateX(4px);
+        }
+
+        /* ============================================================
+           STATUS BADGES
+           ============================================================ */
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.75em;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+
+        .status-confirmed {
+            background: var(--success-soft);
+            color: var(--success);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        .status-cancelled {
+            background: var(--error-soft);
+            color: var(--error);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        /* ============================================================
+           BOOKING CARD
+           ============================================================ */
+        .booking-card {
+            background: var(--gradient-card) !important;
+            border: 1px solid var(--border) !important;
+            border-radius: var(--r-md) !important;
+            padding: 20px !important;
+            margin: 12px 0 !important;
+            transition: all 0.3s var(--ease) !important;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .booking-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            width: 3px;
+            background: var(--gradient-brand);
+        }
+
+        .booking-card:hover {
+            border-color: var(--border-hover) !important;
+            box-shadow: var(--shadow-glow) !important;
+        }
+
     </style>
     """
     st.markdown(custom_css, unsafe_allow_html=True)
 
-inject_custom_css()
+def render_custom_header():
+    """Render a premium custom header bar"""
+    user = st.session_state.get("user", "")
+    role = st.session_state.get("role", "")
+    initial = user[0].upper() if user else ""
+    role_label = "Agency" if role == "Travel Agency" else "User"
+
+    nav_html = ""
+    if user:
+        nav_html = f'''
+        <div class="header-nav">
+            <span class="header-nav-link active">Dashboard</span>
+        </div>
+        <div class="header-user">
+            <div class="header-user-avatar">{initial}</div>
+            <div class="header-user-info">
+                <span class="header-user-name">{user}</span>
+                <span class="header-user-role">{role_label}</span>
+            </div>
+        </div>
+        '''
+
+    header_html = f'''
+    <div class="custom-header">
+        <div class="header-logo">
+            <div class="header-logo-icon">🎫</div>
+            <span class="header-logo-text">TicketHub</span>
+        </div>
+        {nav_html}
+    </div>
+    '''
+    st.markdown(header_html, unsafe_allow_html=True)
+
+def render_custom_footer():
+    """Render a premium custom footer"""
+    st.markdown('''
+    <div class="custom-footer">
+        <div class="footer-brand">TicketHub</div>
+        <div class="footer-copy">Your trusted partner for bus travel &mdash; Book anywhere, anytime &copy; 2026</div>
+    </div>
+    ''', unsafe_allow_html=True)
 
 # =====================================================
 # LOGIN PAGE
@@ -435,11 +1304,24 @@ def login_page():
         initial_sidebar_state="collapsed"
     )
     
-    # Responsive layout: full width on mobile, centered on desktop
+    init_session_state()
+    inject_custom_css()
+    render_custom_header()
+    
+    # Hero section
+    hero_html = '''
+    <div class="login-hero">
+        <div class="login-hero-badge">🎫 Online Bus Booking</div>
+        <h1>Book Your Journey</h1>
+        <p>Travel smarter with seamless bus ticket booking. Choose your route, pick your seat, and you're ready to go.</p>
+    </div>
+    '''
+    st.markdown(hero_html, unsafe_allow_html=True)
+    
+    # Login card centered
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.markdown("# 🎫 Smart Ticket Booking")
-        st.markdown("---")
+        st.markdown('<div class="login-card">', unsafe_allow_html=True)
         
         # Tab selection
         tab1, tab2 = st.tabs(["👤 User Login", "🏢 Agency Login"])
@@ -486,14 +1368,24 @@ def login_page():
                 new_username = st.text_input("New Username", key="new_user_username")
                 new_password = st.text_input("New Password", type="password", key="new_user_password")
                 confirm_password = st.text_input("Confirm Password", type="password", key="confirm_password")
+                new_phone = st.text_input("Mobile Number", placeholder="e.g., 9876543210", key="new_user_phone")
                 signup_gender = st.selectbox("Gender", ["Male", "Female"], key="signup_gender")
                 full_name = st.text_input("Full Name", key="signup_fullname")
                 age = st.number_input("Age", min_value=1, max_value=120, value=25, key="signup_age")
                 
                 if st.button("✅ Create Account", use_container_width=True):
                     if new_username and new_password and full_name:
-                        if new_password == confirm_password:
-                            result = db.create_user(new_username, new_password, "User", gender_option=signup_gender, full_name=full_name, age=int(age))
+                        # Validate phone
+                        from auth import validate_phone, validate_password_strength
+                        phone_valid = validate_phone(new_phone)
+                        pw_valid = validate_password_strength(new_password)
+                        
+                        if not phone_valid["valid"]:
+                            st.error(f"❌ {phone_valid['message']}")
+                        elif not pw_valid["valid"]:
+                            st.error(f"❌ {pw_valid['message']}")
+                        elif new_password == confirm_password:
+                            result = db.create_user(new_username, new_password, "User", gender_option=signup_gender, full_name=full_name, age=int(age), phone=phone_valid["formatted"])
                             if result['success']:
                                 st.success("✅ Account created! Please login now.")
                                 st.session_state.show_signup = False
@@ -519,7 +1411,7 @@ def login_page():
                         result = db.login_user(agency_username, agency_password)
                         if result['success'] and result['role'] == "Travel Agency":
                             st.session_state.user = agency_username
-                            st.session_state.role = "Travel Agency"
+                            st.session_state.role = "Agency"
                             # Ensure fresh conversation for agency user
                             active_conversations[agency_username] = BookingConversation(agency_username)
                             st.session_state.logged_in = True
@@ -541,6 +1433,7 @@ def login_page():
                 new_agency_username = st.text_input("Username", key="new_agency_username")
                 new_agency_password = st.text_input("Password", type="password", key="new_agency_password")
                 confirm_agency_password = st.text_input("Confirm Password", type="password", key="confirm_agency_password")
+                agency_phone = st.text_input("Mobile Number", placeholder="e.g., 9876543210", key="agency_phone")
                 
                 total_vehicles = st.number_input("Total Vehicles", min_value=1, value=5)
                 seats_per_vehicle = st.number_input("Seats Per Vehicle", min_value=1, value=50)
@@ -551,7 +1444,15 @@ def login_page():
                 
                 if st.button("✅ Register Agency", use_container_width=True):
                     if new_agency_username and new_agency_password and agency_name:
-                        if new_agency_password == confirm_agency_password:
+                        from auth import validate_phone, validate_password_strength
+                        phone_valid = validate_phone(agency_phone)
+                        pw_valid = validate_password_strength(new_agency_password)
+                        
+                        if not phone_valid["valid"]:
+                            st.error(f"❌ {phone_valid['message']}")
+                        elif not pw_valid["valid"]:
+                            st.error(f"❌ {pw_valid['message']}")
+                        elif new_agency_password == confirm_agency_password:
                             routes = [r.strip() for r in routes_text.split(',') if '-' in r]
                             routes_list = [{"source": r.split('-')[0].strip(), 
                                           "destination": r.split('-')[1].strip()} for r in routes]
@@ -565,7 +1466,7 @@ def login_page():
                             }
                             
                             result = db.create_user(new_agency_username, new_agency_password, 
-                                                  "Travel Agency", agency_details)
+                                                  "Travel Agency", agency_details, phone=phone_valid["formatted"])
                             if result['success']:
                                 st.success("✅ Agency registered! Please login now.")
                                 st.session_state.show_agency_signup = False
@@ -576,6 +1477,10 @@ def login_page():
                             st.error("❌ Passwords don't match!")
                     else:
                         st.warning("⚠️ Please fill in all required fields")
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    render_custom_footer()
 
 # =====================================================
 # USER CHATBOT PAGE
@@ -586,22 +1491,36 @@ def user_chatbot_page():
     st.set_page_config(
         page_title="Ticket Booking Chatbot", 
         layout="wide",
-        initial_sidebar_state="auto"
+        initial_sidebar_state="expanded"
     )
+    
+    init_session_state()
+    inject_custom_css()
+    render_sidebar()
     
     # Check if user is accessing profile settings
     if st.session_state.get("quick_action") == "profile_settings":
         user_profile_page()
         return
     
-    # Render sidebar
-    render_sidebar()
+    render_custom_header()
     
-    # Header
-    col1, col2, col3 = st.columns([1, 1, 1])
-    with col1:
-        st.markdown("# 🤖 Booking Assistant")
-    with col3:
+    # Page header with gradient
+    header_html = f'''
+    <div style="padding: 16px 0 8px; margin-bottom: 8px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+            <div>
+                <h1 style="margin-bottom:4px !important; font-size:1.8em !important;">Booking Assistant</h1>
+                <p style="color:var(--text-secondary); font-size:0.9em; margin:0;">Welcome back, <strong style="color:var(--primary);">{st.session_state.user}</strong></p>
+            </div>
+        </div>
+    </div>
+    '''
+    st.markdown(header_html, unsafe_allow_html=True)
+    
+    # Logout button (top right)
+    col1, col2 = st.columns([6, 1])
+    with col2:
         if st.button("🚪 Logout"):
             st.session_state.logged_in = False
             st.session_state.user = None
@@ -609,7 +1528,6 @@ def user_chatbot_page():
             st.session_state.chat_history = []
             st.rerun()
     
-    st.markdown(f"**Welcome, {st.session_state.user}!** 👋")
     st.markdown("---")
     
     if st.session_state.booking_mode == "ai_bot":
@@ -618,7 +1536,7 @@ def user_chatbot_page():
         st.markdown("*Chat with our intelligent booking assistant - simply describe what you need!*")
         st.markdown("")
         
-        # Quick action buttons - responsive layout (2 cols on mobile, 5 on desktop)
+        # Quick action buttons
         col1, col2, col3, col4, col5 = st.columns(5)
         
         with col1:
@@ -656,15 +1574,13 @@ def user_chatbot_page():
         # Display chat history
         for i, msg in enumerate(st.session_state.chat_history):
             if msg['role'] == 'user':
-                st.markdown(f"<div class='user-message'>👤 You: {msg['content']}</div>", 
-                           unsafe_allow_html=True)
+                st.write(f"👤 **You**: {msg['content']}")
             else:
                 # Check if message contains HTML (seat map)
                 if '<div' in msg['content'] or '<button' in msg['content']:
                     st.markdown(msg['content'], unsafe_allow_html=True)
                 else:
-                    st.markdown(f"<div class='bot-message'>🤖 Bot:\n\n{msg['content']}</div>", 
-                               unsafe_allow_html=True)
+                    st.write(f"🤖 **Bot**: {msg['content']}")
 
         # If bot is awaiting confirmation, show Confirm/Cancel buttons
         conv = active_conversations.get(st.session_state.user) if st.session_state.user else None
@@ -883,10 +1799,30 @@ def user_chatbot_page():
                             - Status: {booking['status'].upper()}
                             """)
                         
+                        with col2:
+                            if booking['status'] != 'cancelled':
+                                # Generate and display QR code
+                                try:
+                                    import qr_generator
+                                    qr_base64 = qr_generator.generate_booking_qr(booking)
+                                    st.markdown(
+                                        f'<img src="data:image/png;base64,{qr_base64}" style="width:120px; border-radius:8px;">',
+                                        unsafe_allow_html=True
+                                    )
+                                    st.caption("📱 Scan QR Code")
+                                except Exception:
+                                    pass
+                        
                         with col3:
                             if booking['status'] != 'cancelled':
                                 if st.button("❌ Cancel", key=f"cancel_{booking['booking_id']}", use_container_width=True):
-                                    db.cancel_booking(booking['booking_id'])
+                                    result = db.cancel_booking(booking['booking_id'])
+                                    if result['success']:
+                                        try:
+                                            import notifications as notif_manager
+                                            notif_manager.send_cancellation_notification(result['booking'])
+                                        except Exception:
+                                            pass
                                     st.success(f"Booking #{booking['booking_id']} cancelled")
                                     st.rerun()
                         
@@ -916,7 +1852,13 @@ def user_chatbot_page():
                 col1, col2 = st.columns(2)
                 with col1:
                     if st.button("✅ Yes, Cancel it", use_container_width=True):
-                        db.cancel_booking(booking_id)
+                        result = db.cancel_booking(booking_id)
+                        if result['success']:
+                            try:
+                                import notifications as notif_manager
+                                notif_manager.send_cancellation_notification(result['booking'])
+                            except Exception:
+                                pass
                         st.success(f"✅ Booking #{booking_id} has been cancelled")
                         st.session_state.quick_action = None
                         st.rerun()
@@ -944,6 +1886,8 @@ def user_chatbot_page():
             with col3:
                 st.markdown("### ❌ Cancel Booking")
                 st.markdown("Cancel any of your existing bookings")
+    
+    render_custom_footer()
 
 # =====================================================
 # USER PROFILE SETTINGS PAGE
@@ -1009,8 +1953,12 @@ def agency_dashboard():
     st.set_page_config(
         page_title="Agency Dashboard", 
         layout="wide",
-        initial_sidebar_state="auto"
+        initial_sidebar_state="expanded"
     )
+    
+    init_session_state()
+    inject_custom_css()
+    render_sidebar()
     
     # Responsive header layout
     col1, col2, col3 = st.columns([1, 1, 1])
@@ -1028,7 +1976,7 @@ def agency_dashboard():
     st.markdown("---")
     
     # Tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Statistics", "📋 Bookings", "🛣️ Routes", "⚙️ Settings", "📢 Send Notification"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊 Statistics", "📋 Bookings", "🛣️ Routes", "⚙️ Settings", "📢 Send Notification", "📱 WhatsApp"])
     
     with tab1:
         st.subheader("📊 Booking Statistics")
@@ -1063,6 +2011,26 @@ def agency_dashboard():
                 
                 st.markdown("### 📈 Bookings by Date")
                 st.bar_chart(date_counts)
+                
+                # Route stats
+                st.markdown("### 🛣️ Bookings by Route")
+                routes = [f"{b.get('source', '')} → {b.get('destination', '')}" for b in bookings]
+                route_counts = pd.Series(routes).value_counts()
+                st.bar_chart(route_counts)
+                
+                # Status breakdown
+                st.markdown("### 📊 Booking Status")
+                statuses = [b.get('status', 'confirmed') for b in bookings]
+                status_counts = pd.Series(statuses).value_counts()
+                st.bar_chart(status_counts)
+                
+                # Revenue estimate
+                st.markdown("### 💰 Revenue Summary")
+                confirmed = [b for b in bookings if b.get('status') == 'confirmed']
+                st.metric("Confirmed Bookings", len(confirmed))
+                st.metric("Cancelled Bookings", len(bookings) - len(confirmed))
+                cancel_rate = ((len(bookings) - len(confirmed)) / len(bookings) * 100) if bookings else 0
+                st.metric("Cancellation Rate", f"{cancel_rate:.1f}%")
     
     with tab2:
         st.subheader("📋 All Bookings")
@@ -1304,6 +2272,153 @@ def agency_dashboard():
                         if sent_fail:
                             st.error(f"❌ Failed to send to {sent_fail} passenger(s).")
 
+    with tab6:
+        st.subheader("📱 WhatsApp Integration")
+        st.markdown("*Connect your WhatsApp Business API to send booking confirmations and notifications.*")
+        st.markdown("---")
+
+        import whatsapp as wa
+        import time
+
+        # Check DB record
+        existing = db.get_whatsapp_instance(agency_username)
+
+        # Check Evolution API live status
+        live_exists = False
+        live_state = "unknown"
+        inst_name_db = existing.get("instance_name") if existing else None
+
+        if inst_name_db:
+            live_exists = wa.instance_exists(inst_name_db)
+            if live_exists:
+                try:
+                    live_data = wa.get_instance_status(inst_name_db)
+                    live_state = live_data.get("state", "unknown")
+                except:
+                    pass
+
+        # CASE 1: DB has record but Evolution API doesn't → clean DB, show create
+        if existing and not live_exists:
+            db.delete_whatsapp_instance(agency_username)
+            existing = None
+            st.warning("Previous instance was removed from server. Please create a new one.")
+
+        # CASE 2: Instance exists on Evolution API
+        if existing and live_exists:
+            st.success(f"✅ WhatsApp instance: `{inst_name_db}`")
+
+            if live_state in ("open", "connected"):
+                st.badge("🟢 Connected", color="green")
+            elif live_state in ("disconnected", "close"):
+                st.badge("🔴 Disconnected", color="red")
+            else:
+                st.badge(f"🟡 {live_state}", color="orange")
+
+            # --- Action buttons ---
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                if st.button("🔄 Refresh Status", use_container_width=True):
+                    try:
+                        status_data = wa.get_instance_status(inst_name_db)
+                        state = status_data.get("state", "unknown")
+                        is_connected = status_data.get("connected", False)
+                        db.update_whatsapp_status(agency_username, is_connected)
+                        from pymongo import MongoClient
+                        db_client = MongoClient(os.getenv("MONGO_URI", ""), serverSelectionTimeoutMS=3000)
+                        db_client["ticket_booking"]["whatsapp_instances"].update_one(
+                            {"agency_username": agency_username},
+                            {"$set": {"status": state}}
+                        )
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+
+            with col2:
+                if st.button("🔗 Get QR Code", use_container_width=True):
+                    try:
+                        # If currently connected, logout first to get fresh QR
+                        if live_state in ("open", "connected"):
+                            with st.spinner("Disconnecting to generate new QR..."):
+                                wa.disconnect_instance(inst_name_db)
+                                time.sleep(4)
+
+                        with st.spinner("Fetching QR code..."):
+                            qr_data = wa.get_qr_code(inst_name_db)
+
+                        if qr_data and qr_data.get("success") and qr_data.get("base64"):
+                            b64 = qr_data["base64"]
+                            if not b64.startswith("data:"):
+                                b64 = f"data:image/png;base64,{b64}"
+                            st.image(b64, width=300)
+                            st.caption("Scan with WhatsApp → Settings → Linked Devices → Link a Device")
+                        else:
+                            msg = qr_data.get("message", "Unknown error") if qr_data else "No response"
+                            st.warning(f"Could not get QR: {msg}")
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+
+            with col3:
+                if st.button("❌ Delete Instance", type="primary", use_container_width=True):
+                    try:
+                        wa.delete_instance(inst_name_db)
+                        db.delete_whatsapp_instance(agency_username)
+                        st.success("Instance deleted.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+
+        # CASE 3: No instance → Create form
+        else:
+            st.markdown("#### Create WhatsApp Instance")
+            instance_name = st.text_input(
+                "Instance Name",
+                value=f"{agency_username}-whatsapp",
+                help="A unique name for your WhatsApp connection (lowercase letters, numbers, and hyphens only)"
+            )
+
+            if st.button("📱 Create Instance", use_container_width=True):
+                if instance_name:
+                    try:
+                        with st.spinner("Creating WhatsApp instance..."):
+                            result = wa.create_instance(instance_name)
+
+                        if result and result.get("success"):
+                            sanitized_name = result.get("instance_name", instance_name)
+                            db.save_whatsapp_instance(agency_username, sanitized_name, result)
+
+                            with st.spinner("Waiting for instance to initialize..."):
+                                time.sleep(5)
+
+                            with st.spinner("Fetching QR code..."):
+                                qr_data = wa.get_qr_code(sanitized_name)
+
+                            if qr_data and qr_data.get("success") and qr_data.get("base64"):
+                                st.success("Instance created! Scan the QR below:")
+                                b64 = qr_data["base64"]
+                                if not b64.startswith("data:"):
+                                    b64 = f"data:image/png;base64,{b64}"
+                                st.image(b64, width=300)
+                                st.caption("Scan with WhatsApp → Settings → Linked Devices → Link a Device")
+                            else:
+                                st.success("Instance created! Click 'Get QR Code' to scan.")
+                            st.rerun()
+                        else:
+                            error_msg = result.get("message", "Unknown error") if result else "No response"
+                            st.error(f"Failed to create: {error_msg}")
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+                else:
+                    st.warning("Please enter an instance name")
+
+        st.markdown("---")
+        st.markdown("#### ℹ️ How it works")
+        st.markdown("""
+        1. **Create Instance** — Generates a WhatsApp connection linked to your agency
+        2. **Scan QR Code** — Open WhatsApp on your phone → Settings → Linked Devices → Link a Device
+        3. **Automatically** — Booking confirmations and cancellation notices are sent via WhatsApp
+        """)
+
 
 # =====================================================
 # MAIN APP
@@ -1315,7 +2430,7 @@ def main():
     else:
         if st.session_state.role == "User":
             user_chatbot_page()
-        elif st.session_state.role == "Travel Agency":
+        elif st.session_state.role == "Agency":
             agency_dashboard()
 
 if __name__ == "__main__":
