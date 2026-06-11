@@ -2425,6 +2425,7 @@ def agency_dashboard():
 # =====================================================
 
 def main():
+    init_session_state()
     if not st.session_state.logged_in:
         login_page()
     else:
