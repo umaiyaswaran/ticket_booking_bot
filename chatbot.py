@@ -12,6 +12,8 @@ API_KEY = "sk-or-v1-e79bb85ce68725d45040e5e3517e13c5eb64f15245410352331c8e3a06c0
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=API_KEY,
+    timeout=15.0,
+    max_retries=1,
 )
 
 # =====================================================

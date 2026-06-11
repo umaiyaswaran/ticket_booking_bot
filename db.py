@@ -3,15 +3,23 @@ from datetime import datetime
 import string
 import os
 from dotenv import load_dotenv
+from urllib.parse import quote_plus
 
 load_dotenv()
 
 # =========================
 # MongoDB Connection
 # =========================
-MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://Umaiyaswaran:Password_7585@cluster0.x706nl9.mongodb.net/ticket_booking?retryWrites=true&w=majority")
+MONGO_URI = os.getenv("MONGO_URI", "")
 
-client = MongoClient(MONGO_URI)
+if not MONGO_URI:
+    _user = quote_plus(os.getenv("MONGO_USER", "Umaiyaswaran"))
+    _pass = quote_plus(os.getenv("MONGO_PASS", "Password_7585"))
+    _host = os.getenv("MONGO_HOST", "cluster0.x706nl9.mongodb.net")
+    _db = os.getenv("MONGO_DB", "ticket_booking")
+    MONGO_URI = f"mongodb+srv://{_user}:{_pass}@{_host}/{_db}?retryWrites=true&w=majority"
+
+client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000, connectTimeoutMS=5000, socketTimeoutMS=5000)
 
 db = client["ticket_booking"]
 
@@ -26,43 +34,25 @@ whatsapp_instances_collection = db["whatsapp_instances"]
 admins_collection = db["admins"]
 revenue_collection = db["revenue"]
 
-print(" MongoDB Connection Settings:")
-print(f"   Database: {db.name}")
-print(f"   Collections: bookings, users, agencies, notifications, buses, cancellations, whatsapp_instances, admins, revenue")
-print(f"   URI: {MONGO_URI[:50]}...")
-
 
 # =========================
 # Init DB
 # =========================
 def init_db():
     try:
-        # Test connection
         client.admin.command("ping")
-        print(" MongoDB Connected Successfully")
-        
-        # Get database and collection info
-        db_list = client.list_database_names()
-        print(f" Available Databases: {db_list}")
-        
-        # Check if ticket_booking exists
-        if "ticket_booking" in db_list:
-            collections = db.list_collection_names()
-            print(f" Collections in ticket_booking: {collections}")
-        
-        # Create indexes for better query performance
         users_collection.create_index("username", unique=True)
         bookings_collection.create_index([("username", 1), ("date", 1)])
+        bookings_collection.create_index("agency_username")
+        bookings_collection.create_index("booking_id")
         agencies_collection.create_index("username", unique=True)
         buses_collection.create_index("agency_username")
         cancellations_collection.create_index("booking_id")
         whatsapp_instances_collection.create_index("agency_username", unique=True)
         admins_collection.create_index("username", unique=True)
         revenue_collection.create_index([("agency_username", 1), ("date", 1)])
-        print(" Database indexes created")
-        
     except Exception as e:
-        print(" MongoDB Connection Failed:", e)
+        print(f"MongoDB Connection Failed: {e}")
 
 
 # =========================
@@ -287,7 +277,6 @@ def login_user(username, password):
         
         if user:
             stored_pw = user.get("password", "")
-            # Support both hashed and legacy plain-text passwords
             from auth import verify_password
             if verify_password(password, stored_pw):
                 return {
@@ -296,9 +285,7 @@ def login_user(username, password):
                     "username": user.get("username"),
                     "role": user.get("role")
                 }
-            # Fallback: check plain text for legacy users
             elif password == stored_pw:
-                # Migrate to hashed password
                 from auth import hash_password
                 users_collection.update_one(
                     {"username": username},
@@ -314,8 +301,10 @@ def login_user(username, password):
         return {"success": False, "message": "Invalid username or password"}
     
     except Exception as e:
-        print(f" LOGIN ERROR: {e}")
-        return {"success": False, "message": str(e)}
+        err = str(e)
+        if "authentication failed" in err or "bad auth" in err:
+            return {"success": False, "message": "Database connection error. Please check MONGO_URI environment variable."}
+        return {"success": False, "message": f"Login error: {err[:100]}"}
 
 
 # =========================
