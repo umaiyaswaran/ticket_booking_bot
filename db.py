@@ -19,7 +19,13 @@ if not MONGO_URI:
     _db = os.getenv("MONGO_DB", "ticket_booking")
     MONGO_URI = f"mongodb+srv://{_user}:{_pass}@{_host}/{_db}?retryWrites=true&w=majority"
 
-client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000, connectTimeoutMS=5000, socketTimeoutMS=5000)
+client = MongoClient(
+    MONGO_URI,
+    serverSelectionTimeoutMS=8000,
+    connectTimeoutMS=8000,
+    socketTimeoutMS=8000,
+    tlsAllowInvalidCertificates=False
+)
 
 db = client["ticket_booking"]
 
