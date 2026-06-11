@@ -16,8 +16,7 @@ if not MONGO_URI:
     _user = quote_plus(os.getenv("MONGO_USER", "Umaiyaswaran"))
     _pass = quote_plus(os.getenv("MONGO_PASS", "Password_7585"))
     _host = os.getenv("MONGO_HOST", "cluster0.x706nl9.mongodb.net")
-    _db = os.getenv("MONGO_DB", "ticket_booking")
-    MONGO_URI = f"mongodb+srv://{_user}:{_pass}@{_host}/{_db}?retryWrites=true&w=majority"
+    MONGO_URI = f"mongodb+srv://{_user}:{_pass}@{_host}/ticket_booking?retryWrites=true&w=majority&appName=Cluster0"
 
 client = MongoClient(
     MONGO_URI,
