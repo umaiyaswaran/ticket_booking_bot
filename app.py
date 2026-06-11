@@ -1306,7 +1306,6 @@ def login_page():
     
     init_session_state()
     inject_custom_css()
-    render_custom_header()
     
     # Hero section
     hero_html = '''
@@ -1503,30 +1502,8 @@ def user_chatbot_page():
         user_profile_page()
         return
     
-    render_custom_header()
-    
-    # Page header with gradient
-    header_html = f'''
-    <div style="padding: 16px 0 8px; margin-bottom: 8px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
-            <div>
-                <h1 style="margin-bottom:4px !important; font-size:1.8em !important;">Booking Assistant</h1>
-                <p style="color:var(--text-secondary); font-size:0.9em; margin:0;">Welcome back, <strong style="color:var(--primary);">{st.session_state.user}</strong></p>
-            </div>
-        </div>
-    </div>
-    '''
-    st.markdown(header_html, unsafe_allow_html=True)
-    
-    # Logout button (top right)
-    col1, col2 = st.columns([6, 1])
-    with col2:
-        if st.button("🚪 Logout"):
-            st.session_state.logged_in = False
-            st.session_state.user = None
-            st.session_state.role = None
-            st.session_state.chat_history = []
-            st.rerun()
+    # Page header
+    st.markdown(f"### 🎫 Welcome back, **{st.session_state.user}**")
     
     st.markdown("---")
     
