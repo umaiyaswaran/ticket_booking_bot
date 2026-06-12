@@ -71,6 +71,7 @@ def create_instance(instance_name: str, phone_number: str = "") -> dict:
         
         payload = {
             "instanceName": instance_name,
+            "integration": "WHATSAPP-BAILEYS",
             "qrcode": True
         }
         
