@@ -1,13 +1,12 @@
 """
-User Profile & Booking Management
-Shows user profile, booking history, and ticket details
+User Profile & Dashboard
+Full profile management, bookings, and account settings
 """
 
 import streamlit as st
 import db
-import pandas as pd
+import auth
 from qr_generator import generate_booking_qr, generate_ticket_html
-from datetime import datetime
 
 # =====================================================
 # PAGE CONFIG
@@ -19,393 +18,227 @@ st.set_page_config(
 )
 
 # =====================================================
-# AUTHENTICATION CHECK
+# AUTH CHECK
 # =====================================================
 if not st.session_state.get("logged_in") or st.session_state.get("role") != "User":
-    st.error("⚠️ Please login as a User to access this page")
+    st.error("Please login as a User to access this page")
     st.stop()
-
-# =====================================================
-# SIDEBAR NAVIGATION
-# =====================================================
-with st.sidebar:
-    st.markdown("### 🎫 TicketHub Menu")
-    st.markdown("---")
-    
-    st.markdown("**👤 USER DASHBOARD**")
-    
-    if st.button("📊 Dashboard", use_container_width=True):
-        st.switch_page("app.py")
-    
-    st.divider()
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🎫 My Bookings", use_container_width=True, key="sb_bookings"):
-            st.rerun()
-    with col2:
-        if st.button("⚙️ Profile", use_container_width=True, key="sb_profile"):
-            st.rerun()
-    
-    st.divider()
-    
-    st.markdown("**🔧 Account**")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🏠 Home", use_container_width=True):
-            st.switch_page("app.py")
-    with col2:
-        if st.button("🚪 Logout", use_container_width=True, type="secondary"):
-            st.session_state.logged_in = False
-            st.session_state.user = None
-            st.session_state.role = None
-            st.session_state.chat_history = []
-            st.success("✅ Logged out successfully")
-            st.rerun()
 
 username = st.session_state.get("user")
 user = db.users_collection.find_one({"username": username})
 
+if not user:
+    st.error("User not found")
+    st.stop()
+
 # =====================================================
-# PAGE TITLE
+# CSS
 # =====================================================
-st.markdown("# 👤 My Profile & Bookings")
-st.divider()
+st.markdown("""
+<style>
+    .profile-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 16px;
+        padding: 30px;
+        color: white;
+        text-align: center;
+        margin-bottom: 20px;
+    }
+    .profile-card h2 { margin: 0; color: white; }
+    .profile-card p { color: rgba(255,255,255,0.8); margin: 5px 0 0 0; }
+    .stat-box {
+        background: #f8f9fa;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        border: 1px solid #e9ecef;
+    }
+    .stat-box h3 { margin: 0; color: #667eea; }
+    .stat-box p { margin: 5px 0 0 0; color: #666; font-size: 0.9em; }
+</style>
+""", unsafe_allow_html=True)
+
+# =====================================================
+# SIDEBAR
+# =====================================================
+with st.sidebar:
+    st.markdown("### Menu")
+    if st.button("Back to Chat", use_container_width=True):
+        st.switch_page("app.py")
+    if st.button("Logout", use_container_width=True, type="secondary"):
+        for key in ["logged_in", "user", "role", "chat_history", "booking_mode", "quick_action"]:
+            if key in st.session_state:
+                del st.session_state[key]
+        st.rerun()
+
+# =====================================================
+# HEADER
+# =====================================================
+full_name = user.get("full_name", username)
+st.markdown(f"""
+<div class="profile-card">
+    <h2>{full_name}</h2>
+    <p>@{username}</p>
+</div>
+""", unsafe_allow_html=True)
 
 # =====================================================
 # TABS
 # =====================================================
-tab1, tab2, tab3 = st.tabs(["👤 Profile", "🎫 My Bookings", "⚙️ Settings"])
+tab1, tab2, tab3 = st.tabs(["Profile", "My Bookings", "Settings"])
 
 # =====================================================
 # TAB 1: PROFILE
 # =====================================================
 with tab1:
-    st.markdown("## Your Profile Information")
-    
-    col1, col2 = st.columns(2)
-    
+    col1, col2, col3, col4 = st.columns(4)
+    total_bookings = db.bookings_collection.count_documents({"username": username})
+    active_bookings = db.bookings_collection.count_documents({"username": username, "status": "confirmed"})
+    cancelled = db.bookings_collection.count_documents({"username": username, "status": "cancelled"})
+
     with col1:
-        st.markdown("""
-        ### Basic Information
-        """)
-        
-        st.markdown(f"""
-        **Username**: {user.get('username')}
-        
-        **Email**: {user.get('email', 'Not set')}
-        
-        **Mobile Number**: {user.get('phone', 'Not set')}
-        
-        **Gender**: {user.get('gender', 'Not specified')}
-        """)
-    
+        st.markdown('<div class="stat-box"><h3>{}</h3><p>Total Bookings</p></div>'.format(total_bookings), unsafe_allow_html=True)
     with col2:
-        st.markdown("""
-        ### Account Details
-        """)
-        
-        st.markdown(f"""
-        **Member Since**: {str(user.get('created_at', 'Unknown'))[:10]}
-        
-        **Total Bookings**: {len(list(db.bookings_collection.find({'username': username})))}
-        
-        **Active Bookings**: {len(list(db.bookings_collection.find({'username': username, 'status': 'confirmed'})))}
-        
-        **Cancelled**: {len(list(db.bookings_collection.find({'username': username, 'status': 'cancelled'})))}
-        """)
-    
-    st.divider()
-    
-    # Edit profile section
-    st.markdown("## Edit Profile")
-    
-    with st.form("edit_profile_form"):
+        st.markdown('<div class="stat-box"><h3>{}</h3><p>Active</p></div>'.format(active_bookings), unsafe_allow_html=True)
+    with col3:
+        st.markdown('<div class="stat-box"><h3>{}</h3><p>Cancelled</p></div>'.format(cancelled), unsafe_allow_html=True)
+    with col4:
+        st.markdown('<div class="stat-box"><h3>{}</h3><p>Phone</p></div>'.format(user.get("phone", "N/A")), unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("### Edit Profile")
+
+    with st.form("edit_profile"):
         col1, col2 = st.columns(2)
-        
+
         with col1:
-            new_email = st.text_input(
-                "Email",
-                value=user.get('email', ''),
-                disabled=True,
-                help="Email cannot be changed"
-            )
-            
-            new_gender = st.selectbox(
-                "Gender",
-                ["Not specified", "Male", "Female", "Other"],
-                index=["Not specified", "Male", "Female", "Other"].index(user.get('gender', 'Not specified'))
-            )
-        
+            new_full_name = st.text_input("Full Name", value=user.get("full_name", ""))
+            new_phone = st.text_input("Phone Number", value=user.get("phone", ""), help="10-digit mobile number")
+
         with col2:
-            new_phone = st.text_input(
-                "Mobile Number",
-                value=user.get('phone', ''),
-                disabled=True,
-                help="Mobile number cannot be changed"
-            )
-            
-            new_name = st.text_input(
-                "Full Name (Optional)",
-                value=user.get('full_name', ''),
-                placeholder="Enter your full name"
-            )
-        
-        st.divider()
-        
-        if st.form_submit_button("💾 Update Profile", use_container_width=True, type="primary"):
-            try:
-                update_data = {
-                    "gender": new_gender,
-                }
-                
-                if new_name:
-                    update_data["full_name"] = new_name
-                
-                db.users_collection.update_one(
-                    {"username": username},
-                    {"$set": update_data}
-                )
-                
-                st.success("✅ Profile updated successfully!")
-                st.rerun()
-            
-            except Exception as e:
-                st.error(f"❌ Error updating profile: {str(e)}")
+            new_gender = st.selectbox("Gender", ["Not specified", "Male", "Female", "Other"],
+                                       index=["Not specified", "Male", "Female", "Other"].index(user.get("gender", "Not specified")))
+            new_age = st.number_input("Age", min_value=1, max_value=120, value=user.get("age", 25) or 25)
+
+        if st.form_submit_button("Save Changes", use_container_width=True, type="primary"):
+            update = {"full_name": new_full_name, "gender": new_gender, "age": new_age}
+            if new_phone and len(new_phone) == 10 and new_phone.isdigit():
+                update["phone"] = new_phone
+            elif new_phone:
+                st.error("Invalid phone number. Enter 10 digits.")
+                st.stop()
+
+            db.users_collection.update_one({"username": username}, {"$set": update})
+            st.success("Profile updated!")
+            st.rerun()
 
 # =====================================================
 # TAB 2: MY BOOKINGS
 # =====================================================
 with tab2:
-    st.markdown("## My Bookings")
-    
-    # Get all bookings for this user
-    user_bookings = list(db.bookings_collection.find({"username": username}).sort("date", -1))
-    
-    # Filter options
+    st.markdown("### My Bookings")
+
+    bookings = list(db.bookings_collection.find({"username": username}).sort("date", -1))
+
     col1, col2 = st.columns(2)
-    
     with col1:
-        status_filter = st.selectbox(
-            "Filter by Status",
-            ["All", "Confirmed", "Cancelled"],
-            key="user_booking_status"
-        )
-    
+        status_filter = st.selectbox("Filter", ["All", "Confirmed", "Cancelled"], key="booking_filter")
     with col2:
-        sort_order = st.radio(
-            "Sort by",
-            ["Latest First", "Oldest First"],
-            horizontal=True
-        )
-    
-    # Apply filters
-    filtered_bookings = user_bookings
-    
+        sort_order = st.radio("Sort", ["Latest", "Oldest"], horizontal=True, key="booking_sort")
+
+    filtered = bookings
     if status_filter != "All":
-        filtered_bookings = [b for b in filtered_bookings if b.get("status") == status_filter.lower()]
-    
-    if sort_order == "Oldest First":
-        filtered_bookings = filtered_bookings[::-1]
-    
-    # Display bookings
-    if filtered_bookings:
-        st.success(f"✅ You have {len(filtered_bookings)} booking(s)")
-        
-        # Create tabs for each booking
-        for i, booking in enumerate(filtered_bookings):
+        filtered = [b for b in filtered if b.get("status") == status_filter.lower()]
+    if sort_order == "Oldest":
+        filtered = filtered[::-1]
+
+    if filtered:
+        for booking in filtered:
             status_icon = "🟢" if booking.get("status") == "confirmed" else "🔴"
-            booking_title = f"{status_icon} #{booking.get('booking_id')} - {booking.get('source')} → {booking.get('destination')} ({booking.get('date')})"
-            
-            with st.expander(booking_title, expanded=(i == 0)):
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.markdown("""
-                    ### Journey Details
-                    """)
-                    st.markdown(f"""
-                    **Route**: {booking.get('source')} → {booking.get('destination')}
-                    
-                    **Date**: {booking.get('date')}
-                    
-                    **Seat**: {booking.get('seat')}
-                    
-                    **Agency**: {booking.get('agency_username')}
-                    """)
-                
-                with col2:
-                    st.markdown("""
-                    ### Passenger Details
-                    """)
-                    st.markdown(f"""
-                    **Name**: {booking.get('passenger_name')}
-                    
-                    **Age**: {booking.get('passenger_age')} years
-                    
-                    **Gender**: {booking.get('passenger_gender', 'Not specified')}
-                    
-                    **Status**: {booking.get('status', 'unknown').upper()}
-                    """)
-                
-                with col3:
-                    st.markdown("""
-                    ### Booking Info
-                    """)
-                    st.markdown(f"""
-                    **Booking ID**: {booking.get('booking_id')}
-                    
-                    **Booked On**: {str(booking.get('created_at', 'Unknown'))[:10]}
-                    
-                    **Price**: ₹500
-                    
-                    **WhatsApp**: ✅ Notification Sent
-                    """)
-                
+            with st.expander(f"{status_icon} #{booking.get('booking_id')} - {booking.get('source')} to {booking.get('destination')} ({booking.get('date')})"):
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.markdown(f"**Route:** {booking.get('source')} to {booking.get('destination')}")
+                    st.markdown(f"**Date:** {booking.get('date')}")
+                    st.markdown(f"**Seat:** {booking.get('seat')}")
+                with c2:
+                    st.markdown(f"**Passenger:** {booking.get('passenger_name')}")
+                    st.markdown(f"**Age:** {booking.get('passenger_age')}")
+                    st.markdown(f"**Gender:** {booking.get('passenger_gender', 'N/A')}")
+                with c3:
+                    st.markdown(f"**Status:** {booking.get('status', 'unknown').upper()}")
+                    st.markdown(f"**Agency:** {booking.get('agency_username')}")
+
                 st.divider()
-                
-                # QR Code
-                st.markdown("### 📱 QR Ticket")
+
                 try:
-                    qr_base64 = generate_booking_qr(booking)
-                    col1, col2, col3 = st.columns([1, 2, 1])
-                    with col2:
-                        st.markdown(
-                            f'<img src="data:image/png;base64,{qr_base64}" style="width:100%; max-width:200px; border-radius:8px;">',
-                            unsafe_allow_html=True
-                        )
-                        st.caption("Scan this QR at boarding")
-                except Exception as e:
-                    st.error(f"❌ Error generating QR: {str(e)}")
-                
-                st.divider()
-                
-                # Actions
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    if st.button("🎫 View Full Ticket", use_container_width=True, key=f"view_ticket_{booking.get('booking_id')}"):
-                        st.session_state.show_ticket = booking.get("booking_id")
-                
-                with col2:
-                    if st.button("📥 Download PDF", use_container_width=True, key=f"download_{booking.get('booking_id')}"):
-                        st.info("📥 PDF download feature coming soon!")
-                
-                with col3:
-                    if booking.get("status") != "cancelled":
-                        if st.button("❌ Cancel Booking", use_container_width=True, key=f"cancel_{booking.get('booking_id')}"):
-                            if st.button("⚠️ Confirm Cancellation", key=f"confirm_cancel_{booking.get('booking_id')}"):
-                                try:
-                                    result = db.cancel_booking(booking.get("booking_id"))
-                                    if result.get("success"):
-                                        st.success(f"✅ Booking #{booking.get('booking_id')} cancelled")
-                                        # Send cancellation notification
-                                        try:
-                                            import notifications as notif_manager
-                                            notif_manager.send_cancellation_notification(result.get("booking"))
-                                        except:
-                                            pass
-                                        st.rerun()
-                                    else:
-                                        st.error(f"❌ Error: {result.get('message')}")
-                                except Exception as e:
-                                    st.error(f"❌ Error: {str(e)}")
-    
+                    qr = generate_booking_qr(booking)
+                    st.image(f"data:image/png;base64,{qr}", width=150)
+                except:
+                    pass
+
+                if booking.get("status") != "cancelled":
+                    if st.button("Cancel Booking", key=f"cancel_{booking.get('booking_id')}"):
+                        result = db.cancel_booking(booking.get("booking_id"))
+                        if result.get("success"):
+                            st.success("Booking cancelled!")
+                            st.rerun()
     else:
-        st.info("📌 No bookings found")
-    
-    # Show full ticket modal
-    if st.session_state.get("show_ticket"):
-        booking = next((b for b in user_bookings if b.get("booking_id") == st.session_state.show_ticket), None)
-        if booking:
-            st.markdown("---")
-            st.markdown("### 🎫 Full Ticket")
-            
-            agency = db.agencies_collection.find_one({"username": booking.get("agency_username")})
-            ticket_html = generate_ticket_html(booking, agency)
-            
-            st.markdown(ticket_html, unsafe_allow_html=True)
-            
-            if st.button("❌ Close"):
-                st.session_state.show_ticket = None
-                st.rerun()
+        st.info("No bookings found")
 
 # =====================================================
 # TAB 3: SETTINGS
 # =====================================================
 with tab3:
-    st.markdown("## Account Settings")
-    
+    st.markdown("### Account Settings")
+
     col1, col2 = st.columns(2)
-    
+
     with col1:
-        st.markdown("### Notifications")
-        
-        notifications_enabled = st.checkbox(
-            "Enable WhatsApp Notifications",
-            value=user.get("notifications_enabled", True),
-            help="Receive WhatsApp updates on bookings and cancellations"
-        )
-        
-        if st.button("💾 Save Notification Settings", use_container_width=True):
-            db.users_collection.update_one(
-                {"username": username},
-                {"$set": {"notifications_enabled": notifications_enabled}}
-            )
-            st.success("✅ Settings saved")
-    
-    with col2:
-        st.markdown("### Password")
-        
-        current_password = st.text_input(
-            "Current Password",
-            type="password",
-            key="current_pwd"
-        )
-        
-        new_password = st.text_input(
-            "New Password",
-            type="password",
-            key="new_pwd"
-        )
-        
-        confirm_password = st.text_input(
-            "Confirm Password",
-            type="password",
-            key="confirm_pwd"
-        )
-        
-        if st.button("🔐 Change Password", use_container_width=True):
-            if not current_password or not new_password or not confirm_password:
-                st.error("❌ All fields are required")
-            elif new_password != confirm_password:
-                st.error("❌ Passwords don't match")
-            elif len(new_password) < 6:
-                st.error("❌ Password must be at least 6 characters")
+        st.markdown("#### Change Password")
+        current_pwd = st.text_input("Current Password", type="password", key="cur_pwd")
+        new_pwd = st.text_input("New Password", type="password", key="new_pwd")
+        confirm_pwd = st.text_input("Confirm Password", type="password", key="conf_pwd")
+
+        if st.button("Update Password", use_container_width=True):
+            if not current_pwd or not new_pwd or not confirm_pwd:
+                st.error("All fields required")
+            elif new_pwd != confirm_pwd:
+                st.error("Passwords don't match")
+            elif len(new_pwd) < 6:
+                st.error("Password must be at least 6 characters")
+            elif not auth.verify_password(current_pwd, user.get("password", "")):
+                st.error("Current password is incorrect")
             else:
-                st.success("✅ Password changed successfully")
-    
+                hashed = auth.hash_password(new_pwd)
+                db.users_collection.update_one({"username": username}, {"$set": {"password": hashed}})
+                st.success("Password updated!")
+
+    with col2:
+        st.markdown("#### Notifications")
+        notif_enabled = st.checkbox("WhatsApp Notifications", value=user.get("notifications_enabled", True))
+        if st.button("Save Preferences", use_container_width=True):
+            db.users_collection.update_one({"username": username}, {"$set": {"notifications_enabled": notif_enabled}})
+            st.success("Settings saved!")
+
     st.divider()
-    
-    st.markdown("### Danger Zone")
-    
-    if st.button("🗑️ Delete Account", use_container_width=True, type="secondary"):
-        st.warning("⚠️ This action cannot be undone. All your data will be deleted.")
-        
-        if st.button("⚠️ Permanently Delete My Account", key="confirm_delete_account"):
+
+    st.markdown("#### Danger Zone")
+    if st.button("Delete My Account", type="secondary"):
+        st.warning("This will permanently delete your account and all data.")
+        if st.button("Confirm Delete", key="confirm_del"):
             db.users_collection.delete_one({"username": username})
-            st.success("✅ Account deleted")
-            st.session_state.logged_in = False
+            db.bookings_collection.delete_many({"username": username})
+            for key in ["logged_in", "user", "role", "chat_history"]:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.success("Account deleted!")
             st.rerun()
 
-# =====================================================
-# FOOTER
-# =====================================================
-st.divider()
-st.markdown("""
-<div style="text-align: center; color: #666; font-size: 0.85em; margin-top: 30px;">
-    <p>💡 Your bookings and QR codes are synced across all devices</p>
-    <p>📱 Show your QR code at the boarding counter</p>
-    <p>🔒 Your personal information is securely stored</p>
-</div>
-""", unsafe_allow_html=True)
+    st.divider()
+
+    if st.button("Logout", use_container_width=True, type="primary"):
+        for key in ["logged_in", "user", "role", "chat_history", "booking_mode", "quick_action"]:
+            if key in st.session_state:
+                del st.session_state[key]
+        st.rerun()
