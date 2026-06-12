@@ -7,6 +7,7 @@ import streamlit as st
 import db
 import whatsapp
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,19 @@ st.divider()
 # CHECK CURRENT INSTANCE
 # =====================================================
 current_instance = db.get_whatsapp_instance(agency_username)
+
+# =====================================================
+# CHECK FOR STALE INSTANCE (DB has record but Evolution API doesn't)
+# =====================================================
+if current_instance and current_instance.get("instance_name"):
+    try:
+        live_exists = whatsapp.instance_exists(current_instance["instance_name"])
+        if not live_exists:
+            db.delete_whatsapp_instance(agency_username)
+            current_instance = None
+            st.warning("Previous instance was removed from server. Please create a new one.")
+    except Exception:
+        pass
 
 # =====================================================
 # MAIN TABS
@@ -190,8 +204,6 @@ with tab2:
         if st.button("📲 Create Instance", use_container_width=True, type="primary"):
             if not instance_name or instance_name.strip() == "":
                 st.error("❌ Please enter an instance name")
-            elif current_instance:
-                st.warning("⚠️ You already have an instance. Delete it first from Settings tab.")
             else:
                 # Sanitize instance name for Evolution API (alphanumeric + underscore only)
                 sanitized_name = "".join(c if c.isalnum() or c == "_" else "_" for c in instance_name.strip()).lower()
@@ -211,6 +223,10 @@ with tab2:
                             
                             if db_result.get("success"):
                                 st.success(f"✅ Instance created: {sanitized_name}")
+                                
+                                # Wait for instance to initialize on Evolution API
+                                with st.spinner("Waiting for instance to initialize..."):
+                                    time.sleep(5)
                                 
                                 # Step 3: Get QR code from Evolution API
                                 with st.spinner("Generating QR code..."):
@@ -250,11 +266,7 @@ with tab2:
                                 st.error(f"❌ Failed to save instance: {db_result.get('message')}")
                         else:
                             st.error(f"❌ Failed on Evolution API: {api_result.get('message')}")
-                            st.info("💡 Make sure:
-- Evolution API URL is correct
-- API Key is valid
-- Instance name uses only letters, numbers, and underscores
-- No spaces or special characters")
+                            st.info("💡 Make sure:\n- Evolution API URL is correct\n- API Key is valid\n- Instance name uses only letters, numbers, and underscores\n- No spaces or special characters")
 
 # =====================================================
 # TAB 3: SETTINGS

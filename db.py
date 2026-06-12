@@ -1309,29 +1309,29 @@ def get_route_stats(agency_username):
 # =========================
 
 def create_whatsapp_instance(agency_username, instance_name, phone_number=""):
-    """Create a WhatsApp instance record for an agency."""
+    """Create or replace a WhatsApp instance record for an agency."""
     try:
         # Check if agency exists
         if not agencies_collection.find_one({"username": agency_username}):
             return {"success": False, "message": "Agency not found"}
         
-        # Check if instance already exists
-        existing = whatsapp_instances_collection.find_one({"agency_username": agency_username})
-        if existing:
-            return {"success": False, "message": "Agency already has a WhatsApp instance configured"}
-        
         instance_data = {
             "agency_username": agency_username,
             "instance_name": instance_name,
             "phone_number": phone_number,
-            "status": "pending_qr",  # pending_qr -> scanned -> connected -> active
+            "status": "pending_qr",
             "qr_code": None,
             "is_connected": False,
             "created_at": datetime.now(),
             "updated_at": datetime.now()
         }
         
-        result = whatsapp_instances_collection.insert_one(instance_data)
+        # Upsert: replace existing record or insert new one
+        whatsapp_instances_collection.update_one(
+            {"agency_username": agency_username},
+            {"$set": instance_data},
+            upsert=True
+        )
         print(f" WhatsApp instance created for agency: {agency_username}")
         return {"success": True, "message": "Instance created successfully", "instance_name": instance_name}
     
@@ -1395,6 +1395,21 @@ def mark_whatsapp_connected(agency_username, phone_number=""):
         return {"success": result.matched_count > 0, "message": "Instance marked as connected"}
     except Exception as e:
         print(f" MARK CONNECTED ERROR: {e}")
+        return {"success": False, "message": str(e)}
+
+
+def update_whatsapp_status(agency_username, is_connected):
+    """Update WhatsApp instance connection status."""
+    try:
+        result = whatsapp_instances_collection.update_one(
+            {"agency_username": agency_username},
+            {"$set": {
+                "is_connected": is_connected,
+                "updated_at": datetime.now()
+            }}
+        )
+        return {"success": result.matched_count > 0, "message": "Status updated"}
+    except Exception as e:
         return {"success": False, "message": str(e)}
 
 
