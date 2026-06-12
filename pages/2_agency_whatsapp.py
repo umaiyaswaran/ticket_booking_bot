@@ -113,60 +113,86 @@ tab1, tab2, tab3 = st.tabs(["📲 Connection Status", "🔗 Connect WhatsApp", "
 with tab1:
     st.markdown("## Current Connection Status")
     
-    if current_instance and current_instance.get("is_connected"):
-        # Connected state
-        col1, col2 = st.columns(2)
+    if current_instance:
+        inst_name = current_instance.get("instance_name")
         
-        with col1:
-            st.markdown("""
-            <div class="status-badge status-connected">
-                ✅ CONNECTED
-            </div>
-            """, unsafe_allow_html=True)
-            
-            st.markdown(f"""
-            **Instance Name**: {current_instance.get('instance_name')}
-            
-            **Phone Number**: {current_instance.get('phone_number', 'Not set')}
-            
-            **Connected Since**: {str(current_instance.get('created_at', 'Unknown'))[:10]}
-            """)
+        # Check live status from Evolution API
+        live_state = "unknown"
+        live_connected = False
+        try:
+            status_data = whatsapp.get_instance_status(inst_name)
+            live_state = status_data.get("state", "unknown")
+            live_connected = status_data.get("connected", False)
+        except Exception:
+            live_state = current_instance.get("status", "unknown")
+            live_connected = current_instance.get("is_connected", False)
         
-        with col2:
-            st.success("Your WhatsApp account is connected and ready to send notifications!")
-            
-            if st.button("🔄 Refresh Status", use_container_width=True):
-                st.rerun()
-    
-    elif current_instance and current_instance.get("status") == "pending_qr":
-        # Pending QR scan
-        st.markdown("""
-        <div class="status-badge status-pending">
-            ⏳ PENDING - SCAN QR CODE
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.info("Your WhatsApp instance is created but not connected yet. Please scan the QR code to connect.")
+        # Update DB with live status
+        if live_connected != current_instance.get("is_connected"):
+            db.mark_whatsapp_connected(agency_username) if live_connected else None
+            db.update_whatsapp_status(agency_username, live_connected)
         
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown(f"**Instance Name**: {current_instance.get('instance_name')}")
-            st.markdown("**Status**: Waiting for QR scan")
+            if live_connected or live_state in ("open", "connected"):
+                st.markdown("""
+                <div class="status-badge status-connected">
+                    CONNECTED
+                </div>
+                """, unsafe_allow_html=True)
+                
+                st.markdown(f"""
+                **Instance Name**: {inst_name}
+                
+                **Phone Number**: {current_instance.get('phone_number', 'Not set')}
+                
+                **Live Status**: {live_state.upper()}
+                
+                **Connected Since**: {str(current_instance.get('created_at', 'Unknown'))[:10]}
+                """)
+            
+            elif live_state in ("disconnected", "close", "connecting"):
+                st.markdown("""
+                <div class="status-badge status-pending">
+                    DISCONNECTED - NEEDS RECONNECT
+                </div>
+                """, unsafe_allow_html=True)
+                
+                st.markdown(f"""
+                **Instance Name**: {inst_name}
+                
+                **Live Status**: {live_state.upper()}
+                
+                **Created**: {str(current_instance.get('created_at', 'Unknown'))[:10]}
+                """)
+            
+            else:
+                st.markdown("""
+                <div class="status-badge status-error">
+                    NOT CONNECTED
+                </div>
+                """, unsafe_allow_html=True)
+                
+                st.markdown(f"**Instance Name**: {inst_name}")
         
         with col2:
-            if st.button("🔄 Refresh Status", use_container_width=True):
+            if live_connected or live_state in ("open", "connected"):
+                st.success("Your WhatsApp is connected and ready to send notifications!")
+            else:
+                st.warning("Scan the QR code in 'Connect WhatsApp' tab to connect.")
+            
+            if st.button("Refresh Status", use_container_width=True):
                 st.rerun()
     
     else:
-        # Not connected
         st.markdown("""
         <div class="status-badge status-error">
-            ❌ NOT CONNECTED
+            NOT CONNECTED
         </div>
         """, unsafe_allow_html=True)
         
-        st.warning("No WhatsApp instance configured yet.")
+        st.warning("No WhatsApp instance configured yet. Go to 'Connect WhatsApp' tab.")
 
 # =====================================================
 # TAB 2: CONNECT WHATSAPP
