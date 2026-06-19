@@ -519,6 +519,34 @@ def _inject_white_theme_css():
             min-height: 50px !important;
             font-size: 0.95em !important;
         }
+        [data-testid="stHorizontalBlock"] {
+            flex-direction: column !important;
+            gap: 8px !important;
+        }
+        [data-testid="stColumn"] {
+            min-width: 100% !important;
+            flex: 1 1 100% !important;
+        }
+        .dataframe { font-size: 0.75em !important; }
+        [data-testid="stMetric"] { padding: 14px !important; }
+        [data-testid="stMetricValue"] { font-size: 1.4em !important; }
+        [data-testid="stTabs"] [data-baseweb="tab-list"] {
+            overflow-x: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+        }
+        [data-testid="stTabs"] button {
+            padding: 8px 14px !important;
+            font-size: 0.82em !important;
+            white-space: nowrap !important;
+        }
+    }
+
+    @media (min-width: 768px) and (max-width: 1023px) {
+        .block-container {
+            padding-left: 16px !important;
+            padding-right: 16px !important;
+        }
+        [data-testid="stHorizontalBlock"] { gap: 10px !important; }
     }
 
     @media (hover: none) and (pointer: coarse) {
@@ -552,10 +580,10 @@ def _inject_white_theme_css():
 
 
 def _inject_sidebar_css():
-    """Inject shared CSS to hide default Streamlit elements and style sidebar."""
+    """Inject responsive sidebar CSS — hamburger menu on mobile, expanded on desktop."""
     st.markdown("""
     <style>
-    /* Hide default nav, header, toolbar, footer */
+    /* Hide default Streamlit elements */
     [data-testid="stSidebarNav"] { display: none !important; }
     header[data-testid="stHeader"] { display: none !important; }
     #MainMenu, footer, button[title="View fullscreen"], .stDeployButton,
@@ -563,79 +591,157 @@ def _inject_sidebar_css():
     div[data-testid="stBottomBlockContainer"] > div:last-child {
         display: none !important;
     }
-    /* Sidebar collapse button — always visible */
+
+    /* Hamburger menu button — always visible, top-left */
     button[data-testid="stSidebarCollapseControl"] {
+        position: fixed !important;
+        top: 10px !important;
+        left: 10px !important;
+        z-index: 99999 !important;
         display: flex !important;
         opacity: 1 !important;
         pointer-events: auto !important;
+        background: #ffffff !important;
+        border: 1px solid #e2e2e2 !important;
+        border-radius: 999px !important;
+        width: 42px !important;
+        height: 42px !important;
+        transition: all 0.2s ease !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
     }
-    /* Force sidebar always expanded and visible */
+    button[data-testid="stSidebarCollapseControl"]:hover {
+        background: #efefef !important;
+        border-color: #afafaf !important;
+    }
+
+    /* Sidebar styling */
     section[data-testid="stSidebar"] {
-        display: block !important;
-        visibility: visible !important;
-        min-width: 300px !important;
-        max-width: 300px !important;
-        width: 300px !important;
-        transform: translateX(0) !important;
-        transition: none !important;
+        background: #ffffff !important;
+        border-right: 1px solid #e2e2e2 !important;
+        transition: transform 0.2s ease !important;
     }
-    section[data-testid="stSidebar"][aria-expanded="false"] {
-        display: block !important;
-        visibility: visible !important;
-        min-width: 300px !important;
-        max-width: 300px !important;
-        width: 300px !important;
-        transform: translateX(0) !important;
+    section[data-testid="stSidebar"] > div {
+        padding-top: 60px !important;
     }
-    /* Ensure sidebar content wrapper is visible */
-    section[data-testid="stSidebar"] > div,
-    section[data-testid="stSidebar"] [data-testid="stSidebarContent"],
-    section[data-testid="stSidebar"] [data-testid="ScrollToBottomContainer"],
-    section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
-        display: block !important;
-        visibility: visible !important;
-        opacity: 1 !important;
+
+    /* ===== DESKTOP (≥1024px) — sidebar always open ===== */
+    @media (min-width: 1024px) {
+        section[data-testid="stSidebar"] {
+            transform: translateX(0) !important;
+            min-width: 280px !important;
+            max-width: 280px !important;
+            width: 280px !important;
+            visibility: visible !important;
+            display: block !important;
+        }
+        section[data-testid="stSidebar"][aria-expanded="false"] {
+            transform: translateX(0) !important;
+            visibility: visible !important;
+            display: block !important;
+        }
+        button[data-testid="stSidebarCollapseControl"] {
+            display: none !important;
+        }
+        .main .block-container,
+        [data-testid="stAppBlockContainer"] {
+            margin-left: 280px !important;
+            padding-left: 20px !important;
+            padding-right: 20px !important;
+        }
     }
-    /* Prevent sidebar from overlapping main content */
-    [data-testid="stAppBlockContainer"],
-    .main .block-container {
-        margin-left: 300px !important;
+
+    /* ===== TABLET (768px–1023px) — sidebar toggleable ===== */
+    @media (min-width: 768px) and (max-width: 1023px) {
+        section[data-testid="stSidebar"] {
+            min-width: 260px !important;
+            max-width: 260px !important;
+            width: 260px !important;
+        }
+        button[data-testid="stSidebarCollapseControl"] {
+            display: flex !important;
+        }
+    }
+
+    /* ===== MOBILE (<768px) — sidebar hidden, hamburger only ===== */
+    @media (max-width: 767px) {
+        section[data-testid="stSidebar"] {
+            min-width: 280px !important;
+            max-width: 280px !important;
+            width: 280px !important;
+            box-shadow: 4px 0 20px rgba(0,0,0,0.15) !important;
+        }
+        section[data-testid="stSidebar"][aria-expanded="false"] {
+            transform: translateX(-100%) !important;
+            visibility: hidden !important;
+            display: none !important;
+        }
+        section[data-testid="stSidebar"][aria-expanded="true"] {
+            transform: translateX(0) !important;
+            visibility: visible !important;
+            display: block !important;
+        }
+        button[data-testid="stSidebarCollapseControl"] {
+            display: flex !important;
+            position: fixed !important;
+            top: 10px !important;
+            left: 10px !important;
+            z-index: 99999 !important;
+        }
+        .main .block-container,
+        [data-testid="stAppBlockContainer"] {
+            margin-left: 0 !important;
+            padding-left: 14px !important;
+            padding-right: 14px !important;
+            padding-top: 50px !important;
+        }
+    }
+
+    /* Mobile overlay backdrop when sidebar is open */
+    @media (max-width: 767px) {
+        section[data-testid="stSidebar"][aria-expanded="true"]::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0,0,0,0.4);
+            z-index: -1;
+        }
     }
     </style>
     """, unsafe_allow_html=True)
 
-    # JavaScript to auto-expand sidebar on page load and after reruns
+    # JavaScript to auto-expand sidebar on desktop only
     st.markdown("""
     <script>
     (function() {
-        function expandSidebar() {
+        function isDesktop() { return window.innerWidth >= 1024; }
+
+        function expandSidebarOnDesktop() {
+            if (!isDesktop()) return;
             try {
                 var sidebar = document.querySelector('section[data-testid="stSidebar"]');
                 if (!sidebar) return;
-                var expanded = sidebar.getAttribute('aria-expanded');
-                if (expanded === 'false') {
+                if (sidebar.getAttribute('aria-expanded') === 'false') {
                     var btn = document.querySelector('button[data-testid="stSidebarCollapseControl"]');
-                    if (btn) { btn.click(); return; }
+                    if (btn) btn.click();
                 }
-                // Also ensure content is visible
-                sidebar.style.display = 'block';
-                sidebar.style.visibility = 'visible';
-                sidebar.style.transform = 'translateX(0)';
             } catch(e) {}
         }
-        // Run on load
+
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', expandSidebar);
+            document.addEventListener('DOMContentLoaded', expandSidebarOnDesktop);
         } else {
-            expandSidebar();
+            expandSidebarOnDesktop();
         }
-        // Run after Streamlit rerenders (mutations)
-        var observer = new MutationObserver(function() { expandSidebar(); });
+
+        var observer = new MutationObserver(function() { expandSidebarOnDesktop(); });
         observer.observe(document.body, { childList: true, subtree: true });
-        // Keep trying for 5 seconds
+
         var attempts = 0;
         var timer = setInterval(function() {
-            expandSidebar();
+            expandSidebarOnDesktop();
             attempts++;
             if (attempts > 25) clearInterval(timer);
         }, 200);
