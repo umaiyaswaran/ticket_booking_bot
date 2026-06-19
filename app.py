@@ -1197,7 +1197,7 @@ def login_page():
         hero_html = f'''
         <div style="text-align: left; margin-bottom: 24px; display: flex; align-items: center;">
             {logo_html}
-            <h1 style="color: #e50914; -webkit-text-fill-color: #e50914; font-size: 2.8em; font-weight: 800; letter-spacing: -0.04em; margin: 0;">TICKETHUB</h1>
+            <h1 style="font-size: 2.8em; font-weight: 800; letter-spacing: -0.04em; margin: 0;"><span style="color: #1a4fa0; -webkit-text-fill-color: #1a4fa0;">TICKET</span><span style="color: #f5820d; -webkit-text-fill-color: #f5820d;">HUB</span></h1>
         </div>
         <div style="margin-bottom: 32px; text-align: left;">
             <h2 style="color: #000000 !important; -webkit-text-fill-color: #000000 !important; font-weight: 800; font-size: 1.6em; letter-spacing: -0.03em; margin: 0 0 8px 0;">BOOK YOUR TICKETS HERE</h2>
