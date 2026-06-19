@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body>
+<script>
+window.addEventListener('message', function(event) {
+    var data = event.data;
+    if (data && data.type === 'voice_transcript') {
+        Streamlit.setComponentValue(data.text);
+    }
+});
+Streamlit.setFrameHeight(0);
+</script>
+</body>
+</html>
